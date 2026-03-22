@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+.npm/
+
+# Build outputs
+.svelte-kit
+backend/dist/
+frontend/.svelte-kit/
+frontend/build/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude
+.claude/
+
+# Docker
+docker-compose.override.yml
+
+# Temp
+*.tmp
+*.temp
+/tmp/

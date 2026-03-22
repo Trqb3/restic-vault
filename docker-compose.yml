@@ -1,0 +1,22 @@
+services:
+  restic-vault:
+    build: .
+    container_name: restic-vault
+    restart: unless-stopped
+    user: "${BACKUP_UID}:${BACKUP_GID}"
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      DB_PATH: /data/restic-vault.db
+      REPO_BASE_DIR: /repos
+      JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY: ${SECRET_KEY}
+    volumes:
+      # SQLite database – persisted across container restarts
+      - restic_data:/data
+      # Restic repositories
+      - ${HOST_REPO_DIR:-/volume1/backup}:/repos:ro
+
+volumes:
+  restic_data:

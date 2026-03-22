@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --color-gray-950: #030712;
+  --color-surface: #111827;
+  --color-surface-2: #1f2937;
+  --color-border: #374151;
+}
+
+html, body {
+  background-color: rgb(3 7 18);
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%       { transform: translateX(-6px); }
+  40%       { transform: translateX(6px); }
+  60%       { transform: translateX(-4px); }
+  80%       { transform: translateX(4px); }
+}
+.shake { animation: shake 0.4s ease-in-out; }
