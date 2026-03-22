@@ -24,10 +24,20 @@ RUN npm run build --workspace=backend
 # ── Stage 2: Production ───────────────────────────────────────────────────────
 FROM node:22-slim AS production
 
-# restic binary + build tools required to recompile better-sqlite3 native module
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    restic python3 make g++ \
-  && rm -rf /var/lib/apt/lists/*
+# restic + rest-server (backup-source proxy) + build tools for better-sqlite3
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends restic curl python3 make g++; \
+    ARCH="$(dpkg --print-architecture)"; \
+    REST_SERVER_VER="0.13.0"; \
+    mkdir -p /tmp/rsd; \
+    curl -fsSL \
+      "https://github.com/restic/rest-server/releases/download/v${REST_SERVER_VER}/rest-server_${REST_SERVER_VER}_linux_${ARCH}.tar.gz" \
+      | tar -xz -C /tmp/rsd; \
+    mv /tmp/rsd/rest-server /usr/local/bin/rest-server; \
+    chmod +x /usr/local/bin/rest-server; \
+    rm -rf /tmp/rsd; \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
