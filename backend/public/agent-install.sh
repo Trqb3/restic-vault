@@ -147,12 +147,15 @@ run_backup() {
 
   # Fetch config from server (paths + exclusions)
   CONFIG_JSON="$(rv_get config 2>/dev/null || echo '{}')"
-  SERVER_PATHS="$(echo "$CONFIG_JSON" | grep -o '"backupPaths":\[[^]]*\]' | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ' ' || echo "")"
-  EXCLUDE_PATTERNS="$(echo "$CONFIG_JSON" | grep -o '"excludePatterns":\[[^]]*\]' | grep -o '"[^"]*"' | tr -d '"' || echo "")"
+  # Strip the key name before extracting quoted values so the key itself isn't
+  # treated as a path/pattern (e.g. "backupPaths":[] → [] → no matches → "")
+  SERVER_PATHS="$(echo "$CONFIG_JSON" | grep -o '"backupPaths":\[[^]]*\]' | sed 's/^"backupPaths"://' | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ' ' || echo "")"
+  EXCLUDE_PATTERNS="$(echo "$CONFIG_JSON" | grep -o '"excludePatterns":\[[^]]*\]' | sed 's/^"excludePatterns"://' | grep -o '"[^"]*"' | tr -d '"' || echo "")"
 
   # Use server-configured paths if available, else fallback to local config
+  # (After the sed fix above, SERVER_PATHS is empty when the array is empty)
   BACKUP_PATHS_ARG=""
-  if [[ -n "$SERVER_PATHS" ]]; then
+  if [[ -n "${SERVER_PATHS// /}" ]]; then
     BACKUP_PATHS_ARG="$SERVER_PATHS"
   else
     # Convert comma-separated RV_PATHS to space-separated
