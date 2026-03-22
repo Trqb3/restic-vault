@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcrypt';
 import { getDb } from './db/index.js';
-import { startIndexer, indexAllRepos } from './services/indexer.js';
+import { startIndexer, indexAllRepos, backfillSizeHistory } from './services/indexer.js';
 import { auditLog } from './services/audit.js';
 import cron from 'node-cron';
 import authRouter from './routes/auth.js';
@@ -178,6 +178,8 @@ app.listen(PORT, () => {
   startIndexer(intervalMinutes);
   // Index immediately on startup so stats are available without waiting for the first cron tick
   indexAllRepos().catch((err) => console.error('[startup] indexAllRepos failed:', err));
+  // Backfill size history for any repos that have no history points yet
+  backfillSizeHistory().catch((err) => console.error('[startup] backfillSizeHistory failed:', err));
 
   // Purge audit log entries older than 90 days — runs every Sunday at 03:00
   cron.schedule('0 3 * * 0', () => {

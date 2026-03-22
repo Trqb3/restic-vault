@@ -91,7 +91,7 @@
     addingUser = true;
     try {
       const created = await adminApi.createUser({ username: newUsername, password: newPassword, role: newRole });
-      users = [...users, { id: Number(created.id), username: created.username, role: created.role as 'admin' | 'viewer', created_at: Date.now() / 1000, repo_count: 0 }];
+      users = [...users, { id: Number(created.id), username: created.username, role: created.role as 'admin' | 'viewer', totp_enabled: 0, created_at: Date.now() / 1000, repo_count: 0 }];
       newUsername = '';
       newPassword = '';
       newRole = 'viewer';

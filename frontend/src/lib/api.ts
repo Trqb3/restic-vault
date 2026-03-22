@@ -100,6 +100,13 @@ export interface AuditStats {
   byType: { event_type: string; c: number }[];
 }
 
+export interface SizeHistoryPoint {
+  recorded_at: number;
+  deduplicated_size: number;
+  total_restore_size: number | null;
+  snapshot_count: number | null;
+}
+
 export interface FileNode {
   struct_type: string;
   name: string;
@@ -165,6 +172,8 @@ export const repos = {
   refresh: (id: number) => request<Repo>('POST', `/api/repos/${id}/refresh`),
   scan: () => request<{ found: number; added: number; newPaths: string[] }>('POST', '/api/repos/scan'),
   stats: (id: number) => request<RepoStats>('GET', `/api/repos/${id}/stats`),
+  sizeHistory: (id: number, days = 90) =>
+    request<SizeHistoryPoint[]>('GET', `/api/repos/${id}/size-history?days=${days}`),
 };
 
 // Settings

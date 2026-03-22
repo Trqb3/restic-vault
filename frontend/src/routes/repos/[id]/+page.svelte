@@ -5,8 +5,9 @@
   import {
     repos as reposApi,
     snapshots as snapshotsApi,
-    type Repo, type Snapshot, type RepoStats, type SnapshotStats
+    type Repo, type Snapshot, type RepoStats, type SnapshotStats, type SizeHistoryPoint
   } from '$lib/api';
+  import SizeHistoryChart from '$lib/components/SizeHistoryChart.svelte';
   import { toast } from '$lib/toast';
   import Calendar from '$lib/components/Calendar.svelte';
   import SnapshotBrowser from '$lib/components/SnapshotBrowser.svelte';
@@ -46,6 +47,11 @@
   let statsLoading = $state(false);
   let statsLoaded = $state(false);
   let statsError = $state(false);
+
+  // Size history chart
+  let sizeHistory = $state<SizeHistoryPoint[]>([]);
+  let sizeHistoryDays = $state(90);
+  let sizeHistoryLoading = $state(false);
 
   // Snapshot stats (lazy, cached per snapshot)
   let snapshotStats = $state<Map<string, SnapshotStats | 'loading' | 'error'>>(new Map());
@@ -164,10 +170,15 @@
     }
   }
 
-  // Details tab: load on first visit
+  // Details tab: load repo stats + size history on first visit
   $effect(() => {
-    if (activeTab === 'details' && !statsLoaded && !statsLoading && !statsError) {
-      loadStats();
+    if (activeTab === 'details') {
+      if (!statsLoaded && !statsLoading && !statsError) {
+        loadStats();
+      }
+      if (sizeHistory.length === 0 && !sizeHistoryLoading) {
+        loadSizeHistory();
+      }
     }
   });
 
@@ -183,6 +194,22 @@
     } finally {
       statsLoading = false;
     }
+  }
+
+  async function loadSizeHistory() {
+    sizeHistoryLoading = true;
+    try {
+      sizeHistory = await reposApi.sizeHistory(repoId, sizeHistoryDays);
+    } catch (err) {
+      console.error('Failed to load size history:', err);
+    } finally {
+      sizeHistoryLoading = false;
+    }
+  }
+
+  async function handleDaysChange(days: number) {
+    sizeHistoryDays = days;
+    await loadSizeHistory();
   }
 
   // Configuration tab: pre-fill from repo
@@ -675,6 +702,20 @@
               </div>
             {/each}
           </div>
+
+          <!-- Size history chart -->
+          {#if sizeHistoryLoading}
+            <div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-4
+                        flex items-center justify-center h-48">
+              <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            </div>
+          {:else}
+            <SizeHistoryChart
+              data={sizeHistory}
+              days={sizeHistoryDays}
+              onDaysChange={handleDaysChange}
+            />
+          {/if}
 
           <!-- Row 2: Snapshot timeline + interval + blobs -->
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">

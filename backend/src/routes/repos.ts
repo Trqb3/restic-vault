@@ -380,6 +380,31 @@ router.get('/:id/stats', validate(idParamsSchema, 'params'), async (req, res) =>
   }
 });
 
+// ── GET /api/repos/:id/size-history — deduplicated size over time ─────────────
+
+router.get('/:id/size-history', validate(idParamsSchema, 'params'), (req, res) => {
+  const repoId = req.params.id as string;
+  if (!canAccessRepo(req.user!.userId, req.user!.role, repoId)) {
+    res.status(404).json({ error: 'Repository not found' });
+    return;
+  }
+  const db = getDb();
+  const days = Math.min(parseInt(req.query['days'] as string) || 90, 365);
+  const since = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
+  const history = db.prepare(`
+    SELECT recorded_at, deduplicated_size, total_restore_size, snapshot_count
+    FROM repo_size_history
+    WHERE repo_id = ? AND recorded_at > ?
+    ORDER BY recorded_at ASC
+  `).all(repoId, since) as Array<{
+    recorded_at: number;
+    deduplicated_size: number;
+    total_restore_size: number | null;
+    snapshot_count: number | null;
+  }>;
+  res.json(history);
+});
+
 // ── PATCH /api/repos/:id — partial update (admin only) ───────────────────────
 
 router.patch('/:id', requireAdmin, validate(idParamsSchema, 'params'), validate(patchRepoSchema), (req, res) => {

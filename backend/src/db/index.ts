@@ -119,6 +119,18 @@ function migrate(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_audit_logs_event_type  ON audit_logs(event_type);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_username    ON audit_logs(username);
 
+    CREATE TABLE IF NOT EXISTS repo_size_history (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo_id            INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+      deduplicated_size  INTEGER NOT NULL,
+      total_restore_size INTEGER,
+      snapshot_count     INTEGER,
+      recorded_at        INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_repo_size_history_repo_time
+      ON repo_size_history(repo_id, recorded_at DESC);
+
     INSERT OR IGNORE INTO settings (key, value) VALUES ('index_interval_minutes', '15');
   `);
 
@@ -292,6 +304,15 @@ export interface Repository {
   snapshot_count: number;
   last_backup: number | null;
   created_at: number;
+}
+
+export interface SizeHistoryRow {
+  id: number;
+  repo_id: number;
+  deduplicated_size: number;
+  total_restore_size: number | null;
+  snapshot_count: number | null;
+  recorded_at: number;
 }
 
 export interface AuditLog {

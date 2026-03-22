@@ -375,6 +375,10 @@ export async function indexRepo(repo: Repository): Promise<void> {
 
     // Update repo-level stats cache
     await fetchAndCacheRepoStats(repo.id, repo.path, password, extraArgs);
+
+    // Record a size history data point (throttled to at most once per hour)
+    await recordSizeHistory(repo, password, extraArgs);
+
     console.log(`[indexer] repo ${repo.id} "${repo.name}": index complete`);
 
   } catch (err) {
@@ -441,6 +445,71 @@ export async function scanBaseDir(baseDir: string): Promise<string[]> {
   }
 
   return found;
+}
+
+// ── Repo size history ─────────────────────────────────────────────────────────
+
+async function recordSizeHistory(
+  repo: Repository,
+  password: string | undefined,
+  sshArgs: string[],
+): Promise<void> {
+  const db = getDb();
+  try {
+    // Only record once per hour max — avoid duplicate points on frequent re-indexing
+    const lastRecord = db.prepare(`
+      SELECT recorded_at FROM repo_size_history
+      WHERE repo_id = ?
+      ORDER BY recorded_at DESC LIMIT 1
+    `).get(repo.id) as { recorded_at: number } | undefined;
+
+    const oneHourAgo = Math.floor(Date.now() / 1000) - 60 * 60;
+    if (lastRecord && lastRecord.recorded_at > oneHourAgo) return;
+
+    const [rawStats, restoreStats] = await Promise.all([
+      getRepoStats(repo.path, password, 'raw-data', sshArgs),
+      getRepoStats(repo.path, password, undefined, sshArgs),
+    ]);
+
+    const snapshotCount = (db.prepare(
+      'SELECT COUNT(*) as c FROM snapshots WHERE repo_id = ?',
+    ).get(repo.id) as { c: number }).c;
+
+    db.prepare(`
+      INSERT INTO repo_size_history (repo_id, deduplicated_size, total_restore_size, snapshot_count)
+      VALUES (?, ?, ?, ?)
+    `).run(repo.id, rawStats.total_size, restoreStats.total_size, snapshotCount);
+  } catch (err) {
+    // Non-fatal — don't fail the whole index run
+    console.warn(`[indexer] Failed to record size history for repo ${repo.id}:`, err instanceof Error ? err.message : err);
+  }
+}
+
+export async function backfillSizeHistory(): Promise<void> {
+  const db = getDb();
+  const repos = db.prepare(`
+    SELECT r.* FROM repositories r
+    LEFT JOIN repo_size_history h ON h.repo_id = r.id
+    WHERE h.id IS NULL AND r.status = 'ok'
+  `).all() as Repository[];
+
+  if (repos.length === 0) return;
+  console.log(`[indexer] Backfilling size history for ${repos.length} repos...`);
+
+  for (const repo of repos) {
+    try {
+      let password: string | undefined;
+      if (repo.password_encrypted) {
+        password = decrypt(repo.password_encrypted);
+      }
+      const sshCtx = await sshContextForRepo(repo.connection_id).catch(() => null);
+      await recordSizeHistory(repo, password, sshCtx?.extraArgs ?? []);
+      sshCtx?.cleanup();
+    } catch {
+      // Skip failed repos silently
+    }
+  }
+  console.log(`[indexer] Size history backfill complete`);
 }
 
 // ── Dynamic cron scheduler ────────────────────────────────────────────────────
