@@ -70,8 +70,7 @@ if ! command -v restic &>/dev/null; then
   RESTIC_VER="0.17.3"
   RESTIC_URL="https://github.com/restic/restic/releases/download/v${RESTIC_VER}/restic_${RESTIC_VER}_${OS}_${ARCH}.bz2"
   TMP_FILE="$(mktemp)"
-  curl -fsSL "$RESTIC_URL" -o "${TMP_FILE}.bz2"
-  bunzip2 "${TMP_FILE}.bz2"
+  curl -fsSL "$RESTIC_URL" | bunzip2 > "$TMP_FILE"
   chmod +x "$TMP_FILE"
   mv "$TMP_FILE" /usr/local/bin/restic
   RESTIC_BIN="/usr/local/bin/restic"
