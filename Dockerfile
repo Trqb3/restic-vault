@@ -34,7 +34,7 @@ RUN set -eux; \
     curl -fsSL \
       "https://github.com/restic/rest-server/releases/download/v${REST_SERVER_VER}/rest-server_${REST_SERVER_VER}_linux_${ARCH}.tar.gz" \
       | tar -xz -C /tmp/rsd; \
-    mv /tmp/rsd/rest-server /usr/local/bin/rest-server; \
+    find /tmp/rsd -type f -name rest-server | head -1 | xargs -I{} mv {} /usr/local/bin/rest-server; \
     chmod +x /usr/local/bin/rest-server; \
     rm -rf /tmp/rsd; \
     rm -rf /var/lib/apt/lists/*
