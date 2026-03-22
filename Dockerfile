@@ -37,8 +37,9 @@ COPY backend/package.json ./backend/
 COPY frontend/package.json ./frontend/
 RUN npm ci --omit=dev
 
-# Copy compiled backend and static frontend build
+# Copy compiled backend, static frontend build, and agent install script
 COPY --from=builder /app/backend/dist/ ./backend/dist/
+COPY --from=builder /app/backend/public/ ./backend/public/
 COPY --from=builder /app/frontend/build/ ./frontend/build/
 
 # Persistent data directory for the SQLite database

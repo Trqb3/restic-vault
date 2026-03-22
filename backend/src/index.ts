@@ -224,14 +224,18 @@ app.use('/restic', resticLimiter, async (req, res) => {
   }
 });
 
-// Serve agent install script from /public
-const PUBLIC_DIR = path.join(process.cwd(), 'public');
-if (fs.existsSync(PUBLIC_DIR)) {
-  app.use('/agent-install.sh', (_, res) => {
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.sendFile(path.join(PUBLIC_DIR, 'agent-install.sh'));
-  });
-}
+// Serve agent install script from backend/public/
+// dist/src/index.js → __dirname = dist/src → ../../public = backend/public/
+const AGENT_SCRIPT = path.join(__dirname, '..', '..', 'public', 'agent-install.sh');
+
+app.get('/agent-install.sh', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  if (!fs.existsSync(AGENT_SCRIPT)) {
+    res.status(404).send('# agent-install.sh not found on this server\n');
+    return;
+  }
+  res.sendFile(AGENT_SCRIPT);
+});
 
 // Serve SvelteKit static build in production
 const FRONTEND_BUILD = path.join(process.cwd(), '..', 'frontend', 'build');
