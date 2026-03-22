@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { auth, admin as adminApi, repos as reposApi, settings, notifications as notificationsApi, type AdminUser, type Repo, type SshConnection, type AuditLog, type AuditStats, type EmailProvider, type NotificationRule, type NotificationLogEntry } from '$lib/api';
+  import { auth, admin as adminApi, repos as reposApi, settings, notifications as notificationsApi, exclusionProfiles as exclusionProfilesApi, type AdminUser, type Repo, type SshConnection, type AuditLog, type AuditStats, type EmailProvider, type NotificationRule, type NotificationLogEntry, type ExclusionProfile } from '$lib/api';
   import { toast } from '$lib/toast';
   import Modal from '$lib/components/Modal.svelte';
   import ConfirmModal from '$lib/components/ConfirmModal.svelte';
@@ -11,7 +11,7 @@
   let users = $state<AdminUser[]>([]);
   let repoList = $state<Repo[]>([]);
   let loading = $state(true);
-  let activeTab = $state<'users' | 'permissions' | 'ssh' | 'settings' | 'logs' | 'notifications'>('users');
+  let activeTab = $state<'users' | 'permissions' | 'ssh' | 'settings' | 'logs' | 'notifications' | 'exclusions'>('users');
 
   // Users tab
   let showAddModal = $state(false);
@@ -500,6 +500,93 @@
     }
     return 'bg-blue-500/10 text-blue-400 ring-1 ring-blue-500/20';
   }
+
+  // ── Exclusion profiles ────────────────────────────────────────────────────
+  let exclusionProfilesList = $state<ExclusionProfile[]>([]);
+  let exclusionsLoading     = $state(false);
+  let showAddProfileModal   = $state(false);
+  let epName        = $state('');
+  let epDescription = $state('');
+  let epPatterns    = $state('');
+  let addingProfile = $state(false);
+  let editingProfile = $state<ExclusionProfile | null>(null);
+
+  async function loadExclusionProfiles() {
+    exclusionsLoading = true;
+    try {
+      exclusionProfilesList = await exclusionProfilesApi.list();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to load profiles');
+    } finally {
+      exclusionsLoading = false;
+    }
+  }
+
+  async function addExclusionProfile() {
+    if (!epName.trim()) return;
+    addingProfile = true;
+    try {
+      await exclusionProfilesApi.create({
+        name: epName.trim(),
+        description: epDescription.trim() || undefined,
+        patterns: epPatterns.split('\n').map(s => s.trim()).filter(Boolean),
+      });
+      exclusionProfilesList = await exclusionProfilesApi.list();
+      epName = ''; epDescription = ''; epPatterns = '';
+      showAddProfileModal = false;
+      toast.success('Profile saved');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save profile');
+    } finally {
+      addingProfile = false;
+    }
+  }
+
+  async function saveEditedProfile() {
+    if (!editingProfile) return;
+    addingProfile = true;
+    try {
+      await exclusionProfilesApi.update(editingProfile.id, {
+        name: epName.trim(),
+        description: epDescription.trim() || undefined,
+        patterns: epPatterns.split('\n').map(s => s.trim()).filter(Boolean),
+      });
+      exclusionProfilesList = await exclusionProfilesApi.list();
+      editingProfile = null;
+      showAddProfileModal = false;
+      toast.success('Profile updated');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update profile');
+    } finally {
+      addingProfile = false;
+    }
+  }
+
+  async function deleteExclusionProfile(id: number) {
+    const ok = await confirm('Delete this exclusion profile? Sources using it will retain a reference but patterns will no longer apply.');
+    if (!ok) return;
+    try {
+      await exclusionProfilesApi.delete(id);
+      exclusionProfilesList = exclusionProfilesList.filter(p => p.id !== id);
+      toast.success('Profile deleted');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete profile');
+    }
+  }
+
+  function openEditProfile(p: ExclusionProfile) {
+    editingProfile = p;
+    epName = p.name;
+    epDescription = p.description ?? '';
+    try { epPatterns = (JSON.parse(p.patterns) as string[]).join('\n'); } catch { epPatterns = ''; }
+    showAddProfileModal = true;
+  }
+
+  function openAddProfile() {
+    editingProfile = null;
+    epName = ''; epDescription = ''; epPatterns = '';
+    showAddProfileModal = true;
+  }
 </script>
 
 {#if loading}
@@ -528,9 +615,9 @@
 
     <!-- Tabs -->
     <div class="flex gap-1 p-1 bg-gray-900 border border-gray-800 rounded-xl w-fit">
-      {#each ([['users', 'Users'], ['permissions', 'Permissions'], ['ssh', 'SSH Connections'], ['settings', 'Einstellungen'], ['logs', 'Audit Logs'], ['notifications', 'Benachrichtigungen']] as const) as [key, label]}
+      {#each ([['users', 'Users'], ['permissions', 'Permissions'], ['ssh', 'SSH Connections'], ['settings', 'Einstellungen'], ['logs', 'Audit Logs'], ['notifications', 'Benachrichtigungen'], ['exclusions', 'Exclusion Profiles']] as const) as [key, label]}
         <button
-                onclick={() => { activeTab = key; if (key === 'logs' && auditLogs.length === 0) loadAuditLogs(0); if (key === 'notifications' && notifProviders.length === 0) loadNotifications(); }}
+                onclick={() => { activeTab = key; if (key === 'logs' && auditLogs.length === 0) loadAuditLogs(0); if (key === 'notifications' && notifProviders.length === 0) loadNotifications(); if (key === 'exclusions' && exclusionProfilesList.length === 0) loadExclusionProfiles(); }}
                 class="px-4 py-1.5 text-sm font-medium rounded-lg transition-all duration-150
                  {activeTab === key
                    ? 'bg-gray-700 text-white shadow-sm'
@@ -1232,6 +1319,74 @@
       </div>
     {/if}
 
+    <!-- Exclusion Profiles Tab -->
+    {#if activeTab === 'exclusions'}
+      <div class="space-y-4">
+        <div class="flex justify-between items-center">
+          <div>
+            <p class="text-sm text-gray-400">
+              Define reusable glob-pattern exclusion sets that backup sources can reference.
+            </p>
+          </div>
+          <button
+            onclick={openAddProfile}
+            class="flex items-center gap-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white
+                   px-3.5 py-2 rounded-lg transition-colors"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+            New Profile
+          </button>
+        </div>
+
+        {#if exclusionsLoading}
+          <div class="flex justify-center py-10">
+            <div class="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        {:else if exclusionProfilesList.length === 0}
+          <div class="bg-gray-900 border border-gray-800 rounded-xl p-10 text-center">
+            <p class="text-gray-500 text-sm">No exclusion profiles yet. Create one to reuse patterns across backup sources.</p>
+          </div>
+        {:else}
+          <div class="space-y-3">
+            {#each exclusionProfilesList as profile (profile.id)}
+              {@const patterns = (() => { try { return JSON.parse(profile.patterns) as string[]; } catch { return []; } })()}
+              <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0 flex-1">
+                    <p class="text-white font-medium text-sm">{profile.name}</p>
+                    {#if profile.description}
+                      <p class="text-gray-500 text-xs mt-0.5">{profile.description}</p>
+                    {/if}
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button
+                      onclick={() => openEditProfile(profile)}
+                      class="text-xs text-gray-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 transition-colors"
+                    >Edit</button>
+                    <button
+                      onclick={() => deleteExclusionProfile(profile.id)}
+                      class="text-xs text-red-400 hover:text-red-300 px-3 py-1.5 rounded-lg hover:bg-red-500/10 transition-colors"
+                    >Delete</button>
+                  </div>
+                </div>
+                {#if patterns.length > 0}
+                  <div class="flex flex-wrap gap-1.5">
+                    {#each patterns as pat}
+                      <code class="text-xs bg-gray-800 text-gray-300 px-2 py-0.5 rounded-md font-mono">{pat}</code>
+                    {/each}
+                  </div>
+                {:else}
+                  <p class="text-xs text-gray-600 italic">No patterns defined</p>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     {#if activeTab === 'permissions'}
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
@@ -1715,5 +1870,61 @@
       disabled={addingRule || !newRuleName || !newRuleRecipientsRaw}
       class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-lg transition-colors"
     >{addingRule ? 'Speichern…' : 'Regel speichern'}</button>
+  {/snippet}
+</Modal>
+
+<!-- Add / Edit Exclusion Profile Modal -->
+<Modal open={showAddProfileModal} title={editingProfile ? 'Edit Profile' : 'New Exclusion Profile'}
+       onclose={() => { showAddProfileModal = false; editingProfile = null; }}>
+  {#snippet children()}
+    <div class="space-y-4">
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5" for="ep-name">Profile Name</label>
+        <input
+          id="ep-name"
+          bind:value={epName}
+          placeholder="e.g. Common Cache Files"
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm
+                 focus:outline-none focus:border-emerald-500 transition-colors"
+        />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5" for="ep-desc">Description</label>
+        <input
+          id="ep-desc"
+          bind:value={epDescription}
+          placeholder="Optional description"
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm
+                 focus:outline-none focus:border-emerald-500 transition-colors"
+        />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5" for="ep-patterns">
+          Exclusion Patterns <span class="text-gray-600 font-normal">(one per line)</span>
+        </label>
+        <textarea
+          id="ep-patterns"
+          bind:value={epPatterns}
+          rows="8"
+          placeholder="*.log&#10;*.tmp&#10;node_modules/&#10;.cache/&#10;/proc/**&#10;/sys/**"
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm
+                 font-mono focus:outline-none focus:border-emerald-500 transition-colors resize-y"
+        ></textarea>
+        <p class="text-xs text-gray-600 mt-1">Shell glob patterns passed to <code>restic backup --exclude</code>.</p>
+      </div>
+    </div>
+  {/snippet}
+  {#snippet footer()}
+    <button
+      onclick={() => { showAddProfileModal = false; editingProfile = null; }}
+      class="px-4 py-2 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-800
+             rounded-lg transition-colors border border-gray-700"
+    >Cancel</button>
+    <button
+      onclick={editingProfile ? saveEditedProfile : addExclusionProfile}
+      disabled={addingProfile || !epName.trim()}
+      class="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500
+             disabled:opacity-40 rounded-lg transition-colors"
+    >{addingProfile ? 'Saving…' : (editingProfile ? 'Save Changes' : 'Create Profile')}</button>
   {/snippet}
 </Modal>

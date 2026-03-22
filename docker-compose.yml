@@ -12,10 +12,16 @@ services:
       REPO_BASE_DIR: /repos
       JWT_SECRET: ${JWT_SECRET}
       SECRET_KEY: ${SECRET_KEY}
+      # Public URL used by the agent install script (no trailing slash)
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      # Directory where backup-source repositories are stored (writable)
+      SOURCES_DIR: /data/sources
+      # Path to the rest-server binary (optional — enables Backup Sources feature)
+      # REST_SERVER_BINARY: /usr/local/bin/rest-server
     volumes:
-      # SQLite database – persisted across container restarts
+      # SQLite database + backup-source repos – persisted across container restarts
       - restic_data:/data
-      # Restic repositories
+      # Restic repositories (read-only — only for indexing pre-existing repos)
       - ${HOST_REPO_DIR:-/volume1/backup}:/repos:ro
 
 volumes:

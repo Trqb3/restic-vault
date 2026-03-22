@@ -289,6 +289,110 @@ export const notifications = {
     request<NotificationLogEntry[]>('GET', '/api/notifications/log'),
 };
 
+// Backup Sources
+export interface BackupSource {
+  id: number;
+  name: string;
+  description: string | null;
+  token_hash: string;
+  repo_id: number | null;
+  repo_name: string | null;
+  repo_path: string | null;
+  disabled: 0 | 1;
+  last_seen_at: number | null;
+  last_backup_at: number | null;
+  agent_version: string | null;
+  created_at: number;
+}
+
+export interface BackupSourceLog {
+  id: number;
+  source_id: number;
+  level: 'info' | 'warning' | 'error';
+  message: string;
+  created_at: number;
+}
+
+export interface AgentCommand {
+  id: number;
+  source_id: number;
+  command: string;
+  params: string | null;
+  status: 'pending' | 'acked' | 'done';
+  created_at: number;
+  acked_at: number | null;
+  done_at: number | null;
+}
+
+export interface ExclusionProfile {
+  id: number;
+  name: string;
+  description: string | null;
+  patterns: string;  // JSON array string
+  created_at: number;
+}
+
+export interface SourceExclusionRule {
+  id: number;
+  source_id: number;
+  profile_id: number | null;
+  custom_patterns: string | null;
+  backup_paths: string | null;
+  created_at: number;
+}
+
+export interface AgentDiscoveredPath {
+  id: number;
+  source_id: number;
+  path: string;
+  size_bytes: number | null;
+  file_count: number | null;
+  last_seen_at: number;
+}
+
+export const backupSources = {
+  list: () =>
+    request<BackupSource[]>('GET', '/api/sources'),
+  get: (id: number) =>
+    request<BackupSource>('GET', `/api/sources/${id}`),
+  create: (data: { name: string; description?: string }) =>
+    request<{ id: number; token: string }>('POST', '/api/sources', data),
+  update: (id: number, data: { description?: string; disabled?: boolean }) =>
+    request<{ ok: boolean }>('PATCH', `/api/sources/${id}`, data),
+  delete: (id: number) =>
+    request<{ ok: boolean }>('DELETE', `/api/sources/${id}`),
+  rotateToken: (id: number) =>
+    request<{ token: string }>('POST', `/api/sources/${id}/rotate-token`),
+  getLogs: (id: number, params?: { limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit  !== undefined) qs.set('limit',  String(params.limit));
+    if (params?.offset !== undefined) qs.set('offset', String(params.offset));
+    const q = qs.toString() ? `?${qs.toString()}` : '';
+    return request<BackupSourceLog[]>('GET', `/api/sources/${id}/logs${q}`);
+  },
+  getCommands: (id: number) =>
+    request<AgentCommand[]>('GET', `/api/sources/${id}/commands`),
+  sendCommand: (id: number, command: string, params?: Record<string, unknown>) =>
+    request<{ id: number }>('POST', `/api/sources/${id}/commands`, { command, params }),
+  getExclusionRule: (id: number) =>
+    request<SourceExclusionRule | null>('GET', `/api/sources/${id}/exclusion-rule`),
+  setExclusionRule: (id: number, data: { profileId?: number | null; customPatterns?: string[]; backupPaths?: string[] }) =>
+    request<{ ok: boolean }>('PUT', `/api/sources/${id}/exclusion-rule`, data),
+  getPaths: (id: number) =>
+    request<AgentDiscoveredPath[]>('GET', `/api/sources/${id}/paths`),
+};
+
+export const exclusionProfiles = {
+  list: () =>
+    request<ExclusionProfile[]>('GET', '/api/exclusion-profiles'),
+  create: (data: { name: string; description?: string; patterns: string[] }) =>
+    request<{ id: number }>('POST', '/api/exclusion-profiles', data),
+  update: (id: number, data: { name?: string; description?: string; patterns?: string[] }) =>
+    request<{ ok: boolean }>('PATCH', `/api/exclusion-profiles/${id}`, data),
+  delete: (id: number) =>
+    request<{ ok: boolean }>('DELETE', `/api/exclusion-profiles/${id}`),
+};
+
 // Files
 export const files = {
   ls: (repoId: number, snapshotId: string, path = '/') =>

@@ -174,6 +174,69 @@ function migrate(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_notification_log_created
       ON notification_log(created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS backup_sources (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      name            TEXT    NOT NULL UNIQUE,
+      description     TEXT,
+      token_hash      TEXT    NOT NULL,
+      repo_id         INTEGER REFERENCES repositories(id) ON DELETE SET NULL,
+      disabled        INTEGER NOT NULL DEFAULT 0,
+      last_seen_at    INTEGER,
+      last_backup_at  INTEGER,
+      agent_version   TEXT,
+      created_at      INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS backup_source_logs (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_id  INTEGER NOT NULL REFERENCES backup_sources(id) ON DELETE CASCADE,
+      level      TEXT    NOT NULL DEFAULT 'info',
+      message    TEXT    NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bsl_source_created ON backup_source_logs(source_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS agent_commands (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_id  INTEGER NOT NULL REFERENCES backup_sources(id) ON DELETE CASCADE,
+      command    TEXT    NOT NULL,
+      params     TEXT,
+      status     TEXT    NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      acked_at   INTEGER,
+      done_at    INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_commands_source_status ON agent_commands(source_id, status);
+
+    CREATE TABLE IF NOT EXISTS exclusion_profiles (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      description TEXT,
+      patterns    TEXT    NOT NULL DEFAULT '[]',
+      created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS source_exclusion_rules (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_id        INTEGER NOT NULL REFERENCES backup_sources(id) ON DELETE CASCADE UNIQUE,
+      profile_id       INTEGER REFERENCES exclusion_profiles(id) ON DELETE SET NULL,
+      custom_patterns  TEXT,
+      backup_paths     TEXT,
+      created_at       INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_discovered_paths (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_id    INTEGER NOT NULL REFERENCES backup_sources(id) ON DELETE CASCADE,
+      path         TEXT    NOT NULL,
+      size_bytes   INTEGER,
+      file_count   INTEGER,
+      last_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(source_id, path)
+    );
+
     INSERT OR IGNORE INTO settings (key, value) VALUES ('index_interval_minutes', '15');
   `);
 
@@ -383,4 +446,62 @@ export interface Snapshot {
   parent: string | null;
   size_bytes: number | null;
   backup_type: string;
+}
+
+export interface BackupSource {
+  id: number;
+  name: string;
+  description: string | null;
+  token_hash: string;
+  repo_id: number | null;
+  disabled: number;  // 0 | 1
+  last_seen_at: number | null;
+  last_backup_at: number | null;
+  agent_version: string | null;
+  created_at: number;
+}
+
+export interface BackupSourceLog {
+  id: number;
+  source_id: number;
+  level: string;
+  message: string;
+  created_at: number;
+}
+
+export interface AgentCommand {
+  id: number;
+  source_id: number;
+  command: string;
+  params: string | null;
+  status: string;
+  created_at: number;
+  acked_at: number | null;
+  done_at: number | null;
+}
+
+export interface ExclusionProfile {
+  id: number;
+  name: string;
+  description: string | null;
+  patterns: string;  // JSON array string
+  created_at: number;
+}
+
+export interface SourceExclusionRule {
+  id: number;
+  source_id: number;
+  profile_id: number | null;
+  custom_patterns: string | null;  // JSON array string
+  backup_paths: string | null;      // JSON array string
+  created_at: number;
+}
+
+export interface AgentDiscoveredPath {
+  id: number;
+  source_id: number;
+  path: string;
+  size_bytes: number | null;
+  file_count: number | null;
+  last_seen_at: number;
 }

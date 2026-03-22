@@ -18,8 +18,13 @@ import settingsRouter from './routes/settings.js';
 import adminRouter from './routes/admin.js';
 import snapshotStatsRouter from './routes/snapshot-stats.js';
 import notificationsRouter from './routes/notifications.js';
+import backupSourcesRouter from './routes/backup-sources.js';
+import exclusionProfilesRouter from './routes/exclusion-profiles.js';
 import { startNotificationScheduler } from './services/notifications.js';
+import { startRestServer, stopRestServer, isRunning, REST_SERVER_PORT, getSourcesDir } from './services/rest-server.js';
+import { getCachedAuth, cacheAuthResult, verifyToken } from './services/token.js';
 import type { User } from './db/index.js';
+import type { BackupSource } from './db/index.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -78,6 +83,17 @@ const apiLimiter = rateLimit({
   message: { error: 'Rate limit exceeded. Please slow down.' },
 });
 
+/** Restic REST proxy: 2000 requests per minute per token (high-volume backup traffic) */
+const resticLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 2000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.headers.authorization ?? req.ip ?? 'unknown',
+  message: { error: 'Restic rate limit exceeded' },
+  skip: () => !isRunning(),
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
@@ -97,6 +113,125 @@ app.use('/api/repos/:repoId/snapshots', filesRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/sources', backupSourcesRouter);
+app.use('/api/exclusion-profiles', exclusionProfilesRouter);
+
+// ── Restic REST server proxy ───────────────────────────────────────────────────
+// Agents call restic with: restic -r rest:https://<host>/restic/<name>/
+// We authenticate the Bearer token, map to a backup source, and forward to
+// the locally-running rest-server process.
+
+app.use('/restic', resticLimiter, async (req, res) => {
+  if (!isRunning()) {
+    res.status(503).json({ error: 'Backup source server is not available. Install rest-server.' });
+    return;
+  }
+
+  // Require Bearer token
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).set('WWW-Authenticate', 'Bearer').json({ error: 'Missing Bearer token' });
+    return;
+  }
+  const raw = authHeader.slice(7);
+  if (!raw.startsWith('rvs1_')) {
+    res.status(401).json({ error: 'Invalid token format' });
+    return;
+  }
+
+  // Auth: check cache or full bcrypt
+  let sourceId: number | null = null;
+  const cached = getCachedAuth(raw);
+  if (cached) {
+    if (cached.disabled) { res.status(403).json({ error: 'Source is disabled' }); return; }
+    sourceId = cached.sourceId;
+  } else {
+    const db = getDb();
+    const sources = db.prepare('SELECT id, token_hash, disabled, name FROM backup_sources').all() as (BackupSource & { name: string })[];
+    for (const src of sources) {
+      if (await verifyToken(raw, src.token_hash)) {
+        cacheAuthResult(raw, src.id, src.disabled === 1);
+        if (src.disabled) { res.status(403).json({ error: 'Source is disabled' }); return; }
+        sourceId = src.id;
+        break;
+      }
+    }
+  }
+
+  if (!sourceId) {
+    res.status(401).json({ error: 'Invalid token' });
+    return;
+  }
+
+  // Update last_seen_at in background (non-blocking)
+  getDb().prepare('UPDATE backup_sources SET last_seen_at = unixepoch() WHERE id = ?').run(sourceId);
+
+  // Extract the source name from the URL path: /restic/<name>/...
+  const urlPath  = req.path;                          // e.g. /my-server/data/abc123
+  const segments = urlPath.replace(/^\//, '').split('/');
+  const sourceName = segments[0];
+
+  if (!sourceName) {
+    res.status(400).json({ error: 'Missing source name in path' });
+    return;
+  }
+
+  // Verify the token belongs to this source name
+  const src = getDb().prepare('SELECT name FROM backup_sources WHERE id = ?').get(sourceId) as { name: string } | undefined;
+  if (!src || src.name !== sourceName) {
+    res.status(403).json({ error: 'Token does not match source name in path' });
+    return;
+  }
+
+  // Forward to rest-server
+  const upstream = `http://127.0.0.1:${REST_SERVER_PORT}${urlPath}${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`;
+
+  try {
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (k === 'authorization' || k === 'host') continue;
+      if (typeof v === 'string') headers[k] = v;
+    }
+
+    const fetchRes = await fetch(upstream, {
+      method: req.method,
+      headers,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      body: ['GET', 'HEAD', 'DELETE'].includes(req.method) ? undefined : (req as any),
+      duplex: 'half',
+    } as RequestInit & { duplex: string });
+
+    res.status(fetchRes.status);
+    fetchRes.headers.forEach((v, k) => {
+      if (k !== 'transfer-encoding') res.setHeader(k, v);
+    });
+
+    if (fetchRes.body) {
+      const reader = fetchRes.body.getReader();
+      const pump = async (): Promise<void> => {
+        const { done, value } = await reader.read();
+        if (done) { res.end(); return; }
+        res.write(value);
+        return pump();
+      };
+      await pump();
+    } else {
+      res.end();
+    }
+  } catch (err) {
+    console.error('[restic-proxy] Forward error:', err);
+    res.status(502).json({ error: 'Failed to reach backup source server' });
+  }
+});
+
+// Serve agent install script from /public
+const PUBLIC_DIR = path.join(process.cwd(), 'public');
+if (fs.existsSync(PUBLIC_DIR)) {
+  app.use('/agent-install.sh', (_, res) => {
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.sendFile(path.join(PUBLIC_DIR, 'agent-install.sh'));
+  });
+}
 
 // Serve SvelteKit static build in production
 const FRONTEND_BUILD = path.join(process.cwd(), '..', 'frontend', 'build');
@@ -186,6 +321,9 @@ app.listen(PORT, () => {
 
   // Start scheduled email digest jobs (weekly / monthly reports)
   startNotificationScheduler();
+
+  // Start embedded restic REST server for backup sources (non-fatal if binary absent)
+  startRestServer().catch((err) => console.error('[rest-server] Startup error:', err));
 
   // Purge audit log entries older than 90 days — runs every Sunday at 03:00
   cron.schedule('0 3 * * 0', () => {

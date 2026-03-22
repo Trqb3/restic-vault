@@ -18,7 +18,10 @@ export type AuditEventType =
   | 'password_reset'
   | 'ssh_connection_created'
   | 'ssh_connection_deleted'
-  | 'permissions_updated';
+  | 'permissions_updated'
+  | 'source_created'
+  | 'source_deleted'
+  | 'source_token_rotated';
 
 export interface AuditOptions {
   eventType: AuditEventType;
