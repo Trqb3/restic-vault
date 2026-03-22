@@ -127,13 +127,23 @@ app.use('/restic', resticLimiter, async (req, res) => {
     return;
   }
 
-  // Require Bearer token
+  // Accept Bearer token OR HTTP Basic Auth (restic embeds credentials in the repo URL as
+  // rest:https://x:<token>@host/... which restic sends as Basic Auth — this works with all
+  // restic versions, whereas --header was only added in restic 0.14.0).
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
+  let raw: string | null = null;
+  if (authHeader?.startsWith('Bearer ')) {
+    raw = authHeader.slice(7);
+  } else if (authHeader?.startsWith('Basic ')) {
+    // Basic base64("username:password") — we use the password field as the token
+    const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
+    const colonIdx = decoded.indexOf(':');
+    if (colonIdx !== -1) raw = decoded.slice(colonIdx + 1);
+  }
+  if (!raw) {
     res.status(401).set('WWW-Authenticate', 'Bearer').json({ error: 'Missing Bearer token' });
     return;
   }
-  const raw = authHeader.slice(7);
   if (!raw.startsWith('rvs1_')) {
     res.status(401).json({ error: 'Invalid token format' });
     return;

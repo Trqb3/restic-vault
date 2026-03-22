@@ -55,9 +55,11 @@ export async function startRestServer(): Promise<void> {
 
   const args = [
     '--path', sourcesDir,
-    '--no-auth',              // Auth handled by our Express proxy
+    '--no-auth',    // Auth is handled by our Express proxy; rest-server trusts all connections
     '--listen', `127.0.0.1:${REST_SERVER_PORT}`,
-    '--private-repos',        // Each top-level subdir is an isolated repo namespace
+    // No --private-repos: that flag expects /<username>/<reponame>/ URL layout.
+    // Our proxy strips /restic and forwards /<name>/ which must map directly to
+    // sourcesDir/<name>/ — the standard (non-private) layout.
   ];
 
   serverProcess = spawn(REST_SERVER_BIN, args, {

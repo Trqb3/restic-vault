@@ -112,7 +112,15 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 # shellcheck source=/etc/resticvault-agent/config
 source "$CONFIG_FILE"
 
-RESTIC_REPO="rest:${RV_SERVER}/restic/${RV_NAME}/"
+# Build restic repo URL with the token embedded as HTTP Basic Auth credentials.
+# This avoids --header (only available in restic >= 0.14.0) while still passing
+# the token through to the ResticVault proxy, which validates it before forwarding
+# to the internal rest-server.
+_RV_PROTO="https"
+[[ "${RV_SERVER}" == http://* ]] && _RV_PROTO="http"
+_RV_HOST="${RV_SERVER#https://}"
+_RV_HOST="${_RV_HOST#http://}"
+RESTIC_REPO="rest:${_RV_PROTO}://x:${RV_TOKEN}@${_RV_HOST}/restic/${RV_NAME}/"
 
 # ── Helper: send JSON to server ───────────────────────────────────────────────
 rv_post() {
@@ -161,10 +169,9 @@ run_backup() {
   ERROR_MSG=""
   STATUS="failure"
 
-  RESTIC_PASSWORD="" RESTIC_REPOSITORY="$RESTIC_REPO" \
+  RESTIC_PASSWORD="" \
     "$RESTIC_BIN" \
       -r "$RESTIC_REPO" \
-      --header "Authorization: Bearer ${RV_TOKEN}" \
       --no-lock \
       backup \
         --json \
@@ -213,7 +220,6 @@ init_repo() {
   RESTIC_PASSWORD="" \
     "$RESTIC_BIN" \
       -r "$RESTIC_REPO" \
-      --header "Authorization: Bearer ${RV_TOKEN}" \
       init 2>&1 | tee -a "$LOG_FILE" || true
 }
 
