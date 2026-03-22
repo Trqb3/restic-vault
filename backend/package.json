@@ -10,6 +10,8 @@
     "create-admin": "tsx scripts/create-admin.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-ses": "^3.1014.0",
+    "@types/nodemailer": "^7.0.11",
     "archiver": "^7.0.1",
     "bcrypt": "^5.1.1",
     "better-sqlite3": "^11.7.0",
@@ -20,6 +22,7 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^3.0.3",
+    "nodemailer": "^8.0.3",
     "otpauth": "^9.5.0",
     "qrcode": "^1.5.4",
     "zod": "^4.3.6"

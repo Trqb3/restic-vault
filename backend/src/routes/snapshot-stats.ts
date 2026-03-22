@@ -14,9 +14,10 @@ router.use(requireAuth);
 function canAccessRepo(userId: number, role: string, repoId: string | number): boolean {
   if (role === 'admin') return true;
   const db = getDb();
+  const numericId = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
   return !!db.prepare(
     'SELECT 1 FROM user_repo_permissions WHERE user_id = ? AND repo_id = ?'
-  ).get(userId, repoId);
+  ).get(userId, numericId);
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -29,27 +30,28 @@ router.get('/:snapshotId/stats',
   validate(statsParamsSchema, 'params'),
   async (req: import('express').Request<{ repoId: string; snapshotId: string }>, res) => {
     const { repoId, snapshotId } = req.params;
+    const numericRepoId = parseInt(repoId, 10);
     const db = getDb();
 
     // Authorization: viewer must have explicit permission
-    if (!canAccessRepo(req.user!.userId, req.user!.role, repoId)) {
+    if (!canAccessRepo(req.user!.userId, req.user!.role, numericRepoId)) {
       res.status(404).json({ error: 'Repository not found' });
       return;
     }
 
-    const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(repoId) as Repository | undefined;
+    const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(numericRepoId) as Repository | undefined;
     if (!repo) { res.status(404).json({ error: 'Repository not found' }); return; }
 
     // Return cached result if available
     const cached = db.prepare(
       'SELECT * FROM snapshot_stats WHERE snapshot_id = ? AND repo_id = ?'
-    ).get(snapshotId, repoId) as SnapshotStats | undefined;
+    ).get(snapshotId, numericRepoId) as SnapshotStats | undefined;
     if (cached) { res.json(cached); return; }
 
     // Get snapshot with parent from DB
     const snap = db.prepare(
       'SELECT snapshot_id, parent FROM snapshots WHERE snapshot_id = ? AND repo_id = ?'
-    ).get(snapshotId, repoId) as Pick<Snapshot, 'snapshot_id' | 'parent'> | undefined;
+    ).get(snapshotId, numericRepoId) as Pick<Snapshot, 'snapshot_id' | 'parent'> | undefined;
     if (!snap) { res.status(404).json({ error: 'Snapshot not found' }); return; }
 
     let password: string | undefined;
@@ -61,7 +63,7 @@ router.get('/:snapshotId/stats',
     // Use chronologically previous snapshot from same host AND same paths
     const snapFull = db.prepare(
       'SELECT hostname, time, paths FROM snapshots WHERE snapshot_id = ? AND repo_id = ?'
-    ).get(snapshotId, repoId) as { hostname: string | null; time: number; paths: string | null } | undefined;
+    ).get(snapshotId, numericRepoId) as { hostname: string | null; time: number; paths: string | null } | undefined;
 
     let prevId: string | null = null;
     if (snapFull?.hostname) {
@@ -74,7 +76,7 @@ router.get('/:snapshotId/stats',
         SELECT snapshot_id, paths FROM snapshots
         WHERE repo_id = ? AND hostname = ? AND time < ?
         ORDER BY time DESC
-      `).all(repoId, snapFull.hostname, snapFull.time) as { snapshot_id: string; paths: string | null }[];
+      `).all(numericRepoId, snapFull.hostname, snapFull.time) as { snapshot_id: string; paths: string | null }[];
 
       const prev = candidates.find((c) => {
         try { return (JSON.parse(c.paths ?? '[]') as string[]).sort().join(',') === snapPaths; }

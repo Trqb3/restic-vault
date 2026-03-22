@@ -118,3 +118,43 @@ export interface HourRow {
   hour: number;
   cnt: number;
 }
+
+export interface EmailProviderRow {
+  id:         number;
+  name:       string;
+  provider:   string;
+  config:     string;  // encrypted JSON
+  is_default: 0 | 1;
+  enabled:    0 | 1;
+  created_at: number;
+}
+
+export interface NotificationRuleRow {
+  id:               number;
+  name:             string;
+  provider_id:      number | null;
+  enabled:          0 | 1;
+  trigger_type:     string;
+  events:           string | null;   // JSON array
+  schedule_type:    string | null;
+  schedule_day:     number | null;
+  schedule_hour:    number;
+  repo_ids:         string | null;   // JSON array
+  source_ids:       string | null;   // JSON array
+  severity_min:     string;
+  recipients:       string;          // JSON array
+  subject_template: string | null;
+  created_at:       number;
+  last_triggered_at: number | null;
+}
+
+export interface NotificationLogRow {
+  id:            number;
+  rule_id:       number | null;
+  provider_id:   number | null;
+  recipients:    string;  // JSON array
+  subject:       string;
+  status:        string;
+  error_message: string | null;
+  created_at:    number;
+}

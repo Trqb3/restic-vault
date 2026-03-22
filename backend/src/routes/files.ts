@@ -19,9 +19,10 @@ const snapshotParamsSchema = z.object({ snapshotId: snapshotIdSchema });
 function canAccessRepo(userId: number, role: string, repoId: string | number): boolean {
   if (role === 'admin') return true;
   const db = getDb();
+  const numericId = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
   return !!db.prepare(
     'SELECT 1 FROM user_repo_permissions WHERE user_id = ? AND repo_id = ?'
-  ).get(userId, repoId);
+  ).get(userId, numericId);
 }
 
 function getRepoAndPassword(
@@ -29,9 +30,10 @@ function getRepoAndPassword(
   userId: number,
   role: string
 ): { repo: Repository; password: string | undefined } | null {
-  if (!canAccessRepo(userId, role, repoId)) return null;
+  const numericRepoId = parseInt(repoId, 10);
+  if (!canAccessRepo(userId, role, numericRepoId)) return null;
   const db = getDb();
-  const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(repoId) as Repository | undefined;
+  const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(numericRepoId) as Repository | undefined;
   if (!repo) return null;
 
   let password: string | undefined;

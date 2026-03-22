@@ -226,6 +226,69 @@ export const admin = {
   getAuditStats: () => request<AuditStats>('GET', '/api/admin/audit-logs/stats'),
 };
 
+// Notifications
+export interface EmailProvider {
+  id: number;
+  name: string;
+  provider: 'smtp' | 'sendgrid' | 'mailgun' | 'resend' | 'ses';
+  is_default: 0 | 1;
+  enabled: 0 | 1;
+  created_at: number;
+}
+
+export interface NotificationRule {
+  id: number;
+  name: string;
+  provider_id: number | null;
+  enabled: 0 | 1;
+  trigger_type: 'event' | 'schedule';
+  events: string | null;
+  schedule_type: 'weekly' | 'monthly' | null;
+  schedule_day: number | null;
+  schedule_hour: number;
+  repo_ids: string | null;
+  source_ids: string | null;
+  severity_min: string;
+  recipients: string;
+  subject_template: string | null;
+  last_triggered_at: number | null;
+  created_at: number;
+}
+
+export interface NotificationLogEntry {
+  id: number;
+  rule_id: number | null;
+  provider_id: number | null;
+  recipients: string;
+  subject: string;
+  status: 'sent' | 'failed';
+  error_message: string | null;
+  created_at: number;
+}
+
+export const notifications = {
+  getProviders:   () =>
+    request<EmailProvider[]>('GET', '/api/notifications/providers'),
+  createProvider: (data: object) =>
+    request<{ id: number }>('POST', '/api/notifications/providers', data),
+  updateProvider: (id: number, data: object) =>
+    request<{ ok: boolean }>('PATCH', `/api/notifications/providers/${id}`, data),
+  deleteProvider: (id: number) =>
+    request<{ ok: boolean }>('DELETE', `/api/notifications/providers/${id}`),
+  testProvider:   (id: number, to: string) =>
+    request<{ ok: boolean }>('POST', `/api/notifications/providers/${id}/test`, { to }),
+  getRules:   () =>
+    request<NotificationRule[]>('GET', '/api/notifications/rules'),
+  createRule: (data: object) =>
+    request<{ id: number }>('POST', '/api/notifications/rules', data),
+  updateRule: (id: number, data: object) =>
+    request<{ ok: boolean }>('PATCH', `/api/notifications/rules/${id}`, data),
+  deleteRule: (id: number) =>
+    request<{ ok: boolean }>('DELETE', `/api/notifications/rules/${id}`),
+  getLog: () =>
+    request<NotificationLogEntry[]>('GET', '/api/notifications/log'),
+};
+
 // Files
 export const files = {
   ls: (repoId: number, snapshotId: string, path = '/') =>

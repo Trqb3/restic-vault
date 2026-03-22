@@ -5,6 +5,7 @@ import { getDb, type Repository, type Snapshot } from '../db/index.js';
 import { decrypt } from './crypto.js';
 import { listSnapshots, classifySnapshots, getSnapshotStats, getSnapshotDiff, getRepoStats } from './restic.js';
 import { sshContextForRepo, type SshKeyContext } from './ssh.js';
+import { fireNotificationEvent } from './notifications.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -388,6 +389,12 @@ export async function indexRepo(repo: Repository): Promise<void> {
       SET status = 'error', error_message = ?, last_indexed = unixepoch()
       WHERE id = ?
     `).run(msg.slice(0, 500), repo.id);
+    // Fire backup_failed notification (non-blocking)
+    fireNotificationEvent({
+      event:  'backup_failed',
+      repoId: repo.id,
+      data:   { repoName: repo.name, repoPath: repo.path, errorMessage: msg },
+    }).catch((e) => console.error('[indexer] notification failed:', e));
   } finally {
     sshCtx?.cleanup();
   }

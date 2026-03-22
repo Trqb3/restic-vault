@@ -9,6 +9,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { encrypt, decrypt } from '../services/crypto.js';
 import { auditLog } from '../services/audit.js';
+import { fireNotificationEvent } from '../services/notifications.js';
 import type { User } from '../db/index.js';
 
 const router = Router();
@@ -67,6 +68,29 @@ router.post('/login', validate(loginSchema), (req, res) => {
 
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     auditLog({ eventType: 'login_failure', req, username, success: false });
+
+    // Check for burst threshold (3+ failures in 15 min from same IP) and notify
+    const db = getDb();
+    const recentFailures = db.prepare(`
+      SELECT COUNT(*) as c, ip_address FROM audit_logs
+      WHERE event_type = 'login_failure'
+        AND username = ?
+        AND created_at > unixepoch() - 900
+      GROUP BY ip_address
+      ORDER BY c DESC LIMIT 1
+    `).get(username) as { c: number; ip_address: string | null } | undefined;
+
+    if (recentFailures && recentFailures.c >= 3) {
+      fireNotificationEvent({
+        event: 'login_failure_burst',
+        data: {
+          username,
+          ip:       recentFailures.ip_address ?? 'unknown',
+          attempts: recentFailures.c,
+        },
+      }).catch(console.error);
+    }
+
     // Same message regardless of whether user exists — prevents username enumeration
     res.status(401).json({ error: 'Benutzername oder Passwort falsch.' });
     return;

@@ -42,9 +42,10 @@ const patchRepoSchema = z.object({
 function canAccessRepo(userId: number, role: string, repoId: string | number): boolean {
   if (role === 'admin') return true;
   const db = getDb();
+  const numericId = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
   return !!db.prepare(
     'SELECT 1 FROM user_repo_permissions WHERE user_id = ? AND repo_id = ?'
-  ).get(userId, repoId);
+  ).get(userId, numericId);
 }
 
 // ── GET /api/repos — list all repos ──────────────────────────────────────────

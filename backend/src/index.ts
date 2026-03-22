@@ -17,6 +17,8 @@ import filesRouter from './routes/files.js';
 import settingsRouter from './routes/settings.js';
 import adminRouter from './routes/admin.js';
 import snapshotStatsRouter from './routes/snapshot-stats.js';
+import notificationsRouter from './routes/notifications.js';
+import { startNotificationScheduler } from './services/notifications.js';
 import type { User } from './db/index.js';
 
 const app = express();
@@ -94,6 +96,7 @@ app.use('/api/repos/:repoId/snapshots', snapshotStatsRouter);
 app.use('/api/repos/:repoId/snapshots', filesRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/notifications', notificationsRouter);
 
 // Serve SvelteKit static build in production
 const FRONTEND_BUILD = path.join(process.cwd(), '..', 'frontend', 'build');
@@ -180,6 +183,9 @@ app.listen(PORT, () => {
   indexAllRepos().catch((err) => console.error('[startup] indexAllRepos failed:', err));
   // Backfill size history for any repos that have no history points yet
   backfillSizeHistory().catch((err) => console.error('[startup] backfillSizeHistory failed:', err));
+
+  // Start scheduled email digest jobs (weekly / monthly reports)
+  startNotificationScheduler();
 
   // Purge audit log entries older than 90 days — runs every Sunday at 03:00
   cron.schedule('0 3 * * 0', () => {

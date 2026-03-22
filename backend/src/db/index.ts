@@ -131,6 +131,49 @@ function migrate(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_repo_size_history_repo_time
       ON repo_size_history(repo_id, recorded_at DESC);
 
+    CREATE TABLE IF NOT EXISTS email_providers (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT    NOT NULL,
+      provider   TEXT    NOT NULL,
+      config     TEXT    NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      enabled    INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_rules (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      name              TEXT    NOT NULL,
+      provider_id       INTEGER REFERENCES email_providers(id) ON DELETE SET NULL,
+      enabled           INTEGER NOT NULL DEFAULT 1,
+      trigger_type      TEXT    NOT NULL,
+      events            TEXT,
+      schedule_type     TEXT,
+      schedule_day      INTEGER,
+      schedule_hour     INTEGER NOT NULL DEFAULT 8,
+      repo_ids          TEXT,
+      source_ids        TEXT,
+      severity_min      TEXT    NOT NULL DEFAULT 'info',
+      recipients        TEXT    NOT NULL,
+      subject_template  TEXT,
+      created_at        INTEGER NOT NULL DEFAULT (unixepoch()),
+      last_triggered_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_log (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_id       INTEGER REFERENCES notification_rules(id) ON DELETE SET NULL,
+      provider_id   INTEGER REFERENCES email_providers(id)    ON DELETE SET NULL,
+      recipients    TEXT    NOT NULL,
+      subject       TEXT    NOT NULL,
+      status        TEXT    NOT NULL,
+      error_message TEXT,
+      created_at    INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notification_log_created
+      ON notification_log(created_at DESC);
+
     INSERT OR IGNORE INTO settings (key, value) VALUES ('index_interval_minutes', '15');
   `);
 

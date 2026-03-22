@@ -25,9 +25,10 @@ const deleteSnapshotsSchema = z.object({
 function canAccessRepo(userId: number, role: string, repoId: string | number): boolean {
   if (role === 'admin') return true;
   const db = getDb();
+  const numericId = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
   return !!db.prepare(
     'SELECT 1 FROM user_repo_permissions WHERE user_id = ? AND repo_id = ?'
-  ).get(userId, repoId);
+  ).get(userId, numericId);
 }
 
 // ── GET /api/repos/:repoId/snapshots ─────────────────────────────────────────
@@ -35,13 +36,14 @@ function canAccessRepo(userId: number, role: string, repoId: string | number): b
 router.get('/', (req: import('express').Request<{ repoId: string }>, res) => {
   const db = getDb();
   const { repoId } = req.params;
+  const numericRepoId = parseInt(repoId, 10);
 
-  if (!canAccessRepo(req.user!.userId, req.user!.role, repoId)) {
+  if (!canAccessRepo(req.user!.userId, req.user!.role, numericRepoId)) {
     res.status(404).json({ error: 'Repository not found' });
     return;
   }
 
-  const repo = db.prepare('SELECT id FROM repositories WHERE id = ?').get(repoId);
+  const repo = db.prepare('SELECT id FROM repositories WHERE id = ?').get(numericRepoId);
   if (!repo) {
     res.status(404).json({ error: 'Repository not found' });
     return;
@@ -52,7 +54,7 @@ router.get('/', (req: import('express').Request<{ repoId: string }>, res) => {
     FROM snapshots s
     LEFT JOIN snapshot_stats ss ON ss.snapshot_id = s.snapshot_id
     WHERE s.repo_id = ? ORDER BY s.time DESC
-  `).all(repoId) as (Snapshot & {
+  `).all(numericRepoId) as (Snapshot & {
     restore_size: number | null; added_size: number | null; file_count: number | null;
     files_new: number | null; files_changed: number | null; files_unmodified: number | null;
   })[];
@@ -72,9 +74,10 @@ router.delete('/', requireAdmin, validate(deleteSnapshotsSchema),
   async (req: import('express').Request<{ repoId: string }>, res) => {
     const db = getDb();
     const { repoId } = req.params;
+    const numericRepoId = parseInt(repoId, 10);
     const { ids } = req.body as z.infer<typeof deleteSnapshotsSchema>;
 
-    const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(repoId) as Repository | undefined;
+    const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(numericRepoId) as Repository | undefined;
     if (!repo) {
       res.status(404).json({ error: 'Repository not found' });
       return;

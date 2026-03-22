@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { auth, admin as adminApi, repos as reposApi, settings, type AdminUser, type Repo, type SshConnection, type AuditLog, type AuditStats } from '$lib/api';
+  import { auth, admin as adminApi, repos as reposApi, settings, notifications as notificationsApi, type AdminUser, type Repo, type SshConnection, type AuditLog, type AuditStats, type EmailProvider, type NotificationRule, type NotificationLogEntry } from '$lib/api';
   import { toast } from '$lib/toast';
   import Modal from '$lib/components/Modal.svelte';
   import ConfirmModal from '$lib/components/ConfirmModal.svelte';
@@ -11,7 +11,7 @@
   let users = $state<AdminUser[]>([]);
   let repoList = $state<Repo[]>([]);
   let loading = $state(true);
-  let activeTab = $state<'users' | 'permissions' | 'ssh' | 'settings' | 'logs'>('users');
+  let activeTab = $state<'users' | 'permissions' | 'ssh' | 'settings' | 'logs' | 'notifications'>('users');
 
   // Users tab
   let showAddModal = $state(false);
@@ -57,6 +57,194 @@
   let auditFilterUser = $state('');
   let auditFilterSuccess = $state('');
   let auditLoading = $state(false);
+
+  // Notifications tab
+  let notifProviders = $state<EmailProvider[]>([]);
+  let notifRules = $state<NotificationRule[]>([]);
+  let notifLog = $state<NotificationLogEntry[]>([]);
+  let notifInnerTab = $state<'providers' | 'rules' | 'log'>('providers');
+  let notifLoading = $state(false);
+
+  // Add-provider modal
+  let showAddProviderModal = $state(false);
+  let newProviderName = $state('');
+  let newProviderType = $state<EmailProvider['provider']>('smtp');
+  let newProviderIsDefault = $state(false);
+  // SMTP fields
+  let npSmtpHost = $state('');
+  let npSmtpPort = $state(587);
+  let npSmtpSecure = $state(false);
+  let npSmtpUser = $state('');
+  let npSmtpPass = $state('');
+  let npFromAddress = $state('');
+  let npFromName = $state('ResticVault');
+  // API-key based fields (sendgrid / resend)
+  let npApiKey = $state('');
+  // Mailgun extra fields
+  let npMailgunDomain = $state('');
+  let npMailgunRegion = $state<'us' | 'eu'>('us');
+  // SES fields
+  let npSesAccessKey = $state('');
+  let npSesSecretKey = $state('');
+  let npSesRegion = $state('eu-central-1');
+  let addingProvider = $state(false);
+  // Test email
+  let testProviderEmail = $state('');
+  let testingProviderId = $state<number | null>(null);
+  let testProviderResult = $state<Record<number, 'ok' | 'error' | string>>({});
+
+  // Add-rule modal
+  let showAddRuleModal = $state(false);
+  let newRuleName = $state('');
+  let newRuleProviderId = $state<number | ''>('');
+  let newRuleTrigger = $state<'event' | 'schedule'>('event');
+  let newRuleEvents = $state<string[]>([]);
+  let newRuleScheduleType = $state<'weekly' | 'monthly'>('weekly');
+  let newRuleScheduleDay = $state(0);
+  let newRuleScheduleHour = $state(8);
+  let newRuleRecipientsRaw = $state('');
+  let addingRule = $state(false);
+
+  const EVENT_OPTIONS: { value: string; label: string }[] = [
+    { value: 'backup_failed',       label: 'Backup fehlgeschlagen' },
+    { value: 'backup_success',      label: 'Backup erfolgreich' },
+    { value: 'agent_disconnected',  label: 'Agent getrennt' },
+    { value: 'agent_connected',     label: 'Agent verbunden' },
+    { value: 'login_failure_burst', label: 'Verdächtige Anmeldeversuche (3+ in 15 Min)' },
+    { value: 'repo_added',          label: 'Repository hinzugefügt' },
+    { value: 'repo_deleted',        label: 'Repository gelöscht' },
+    { value: 'snapshot_deleted',    label: 'Snapshot gelöscht' },
+    { value: 'user_created',        label: 'Benutzer erstellt' },
+    { value: 'user_deleted',        label: 'Benutzer gelöscht' },
+  ];
+
+  const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+  const PROVIDER_LABELS: Record<EmailProvider['provider'], string> = {
+    smtp: 'SMTP', sendgrid: 'SendGrid', mailgun: 'Mailgun', resend: 'Resend', ses: 'AWS SES',
+  };
+
+  async function loadNotifications() {
+    notifLoading = true;
+    try {
+      const [p, r, l] = await Promise.all([
+        notificationsApi.getProviders(),
+        notificationsApi.getRules(),
+        notificationsApi.getLog(),
+      ]);
+      notifProviders = p;
+      notifRules = r;
+      notifLog = l;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler beim Laden der Benachrichtigungen');
+    } finally {
+      notifLoading = false;
+    }
+  }
+
+  function buildProviderConfig() {
+    switch (newProviderType) {
+      case 'smtp':     return { host: npSmtpHost, port: npSmtpPort, secure: npSmtpSecure, username: npSmtpUser, password: npSmtpPass, fromAddress: npFromAddress, fromName: npFromName };
+      case 'sendgrid':
+      case 'resend':   return { apiKey: npApiKey, fromAddress: npFromAddress, fromName: npFromName };
+      case 'mailgun':  return { apiKey: npApiKey, domain: npMailgunDomain, region: npMailgunRegion, fromAddress: npFromAddress, fromName: npFromName };
+      case 'ses':      return { accessKeyId: npSesAccessKey, secretAccessKey: npSesSecretKey, region: npSesRegion, fromAddress: npFromAddress, fromName: npFromName };
+    }
+  }
+
+  async function addProvider() {
+    if (!newProviderName || !npFromAddress) return;
+    addingProvider = true;
+    try {
+      await notificationsApi.createProvider({
+        name: newProviderName, provider: newProviderType,
+        isDefault: newProviderIsDefault, config: buildProviderConfig(),
+      });
+      notifProviders = await notificationsApi.getProviders();
+      showAddProviderModal = false;
+      newProviderName = ''; npFromAddress = ''; npFromName = 'ResticVault';
+      npApiKey = ''; npSmtpHost = ''; npSmtpUser = ''; npSmtpPass = '';
+      toast.success('Anbieter gespeichert');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler beim Speichern');
+    } finally {
+      addingProvider = false;
+    }
+  }
+
+  async function deleteProvider(id: number) {
+    const ok = await confirm('Diesen E-Mail-Anbieter löschen?');
+    if (!ok) return;
+    try {
+      await notificationsApi.deleteProvider(id);
+      notifProviders = notifProviders.filter(p => p.id !== id);
+      toast.success('Anbieter gelöscht');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler');
+    }
+  }
+
+  async function testProvider(id: number) {
+    if (!testProviderEmail) { toast.error('Bitte Test-E-Mail-Adresse eingeben'); return; }
+    testingProviderId = id;
+    try {
+      await notificationsApi.testProvider(id, testProviderEmail);
+      testProviderResult = { ...testProviderResult, [id]: 'ok' };
+      toast.success('Test-E-Mail gesendet');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Fehler';
+      testProviderResult = { ...testProviderResult, [id]: msg };
+      toast.error(`Test fehlgeschlagen: ${msg}`);
+    } finally {
+      testingProviderId = null;
+    }
+  }
+
+  async function addRule() {
+    const recipients = newRuleRecipientsRaw.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+    if (!newRuleName || recipients.length === 0) return;
+    addingRule = true;
+    try {
+      await notificationsApi.createRule({
+        name: newRuleName,
+        providerId: newRuleProviderId || null,
+        triggerType: newRuleTrigger,
+        events: newRuleTrigger === 'event' ? newRuleEvents : undefined,
+        scheduleType: newRuleTrigger === 'schedule' ? newRuleScheduleType : undefined,
+        scheduleDay: newRuleTrigger === 'schedule' ? newRuleScheduleDay : undefined,
+        scheduleHour: newRuleTrigger === 'schedule' ? newRuleScheduleHour : undefined,
+        recipients,
+      });
+      notifRules = await notificationsApi.getRules();
+      showAddRuleModal = false;
+      newRuleName = ''; newRuleRecipientsRaw = ''; newRuleEvents = [];
+      toast.success('Regel gespeichert');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler beim Speichern');
+    } finally {
+      addingRule = false;
+    }
+  }
+
+  async function toggleRule(rule: NotificationRule) {
+    try {
+      await notificationsApi.updateRule(rule.id, { enabled: !rule.enabled });
+      notifRules = notifRules.map(r => r.id === rule.id ? { ...r, enabled: (rule.enabled ? 0 : 1) as 0 | 1 } : r);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler');
+    }
+  }
+
+  async function deleteRule(id: number) {
+    const ok = await confirm('Diese Regel löschen?');
+    if (!ok) return;
+    try {
+      await notificationsApi.deleteRule(id);
+      notifRules = notifRules.filter(r => r.id !== id);
+      toast.success('Regel gelöscht');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler');
+    }
+  }
 
   // Permissions tab
   let selectedUserId = $state<number | null>(null);
@@ -340,9 +528,9 @@
 
     <!-- Tabs -->
     <div class="flex gap-1 p-1 bg-gray-900 border border-gray-800 rounded-xl w-fit">
-      {#each ([['users', 'Users'], ['permissions', 'Permissions'], ['ssh', 'SSH Connections'], ['settings', 'Einstellungen'], ['logs', 'Audit Logs']] as const) as [key, label]}
+      {#each ([['users', 'Users'], ['permissions', 'Permissions'], ['ssh', 'SSH Connections'], ['settings', 'Einstellungen'], ['logs', 'Audit Logs'], ['notifications', 'Benachrichtigungen']] as const) as [key, label]}
         <button
-                onclick={() => { activeTab = key; if (key === 'logs' && auditLogs.length === 0) loadAuditLogs(0); }}
+                onclick={() => { activeTab = key; if (key === 'logs' && auditLogs.length === 0) loadAuditLogs(0); if (key === 'notifications' && notifProviders.length === 0) loadNotifications(); }}
                 class="px-4 py-1.5 text-sm font-medium rounded-lg transition-all duration-150
                  {activeTab === key
                    ? 'bg-gray-700 text-white shadow-sm'
@@ -814,6 +1002,236 @@
       </div>
     {/if}
 
+    <!-- Notifications Tab -->
+    {#if activeTab === 'notifications'}
+      <div class="space-y-4">
+        <!-- Inner tabs -->
+        <div class="flex gap-1 p-0.5 bg-gray-800 rounded-lg w-fit">
+          {#each ([['providers', 'Anbieter'], ['rules', 'Regeln'], ['log', 'Protokoll']] as const) as [k, lbl]}
+            <button
+              type="button"
+              onclick={() => notifInnerTab = k}
+              class="px-3 py-1.5 text-xs font-medium rounded-md transition-colors
+                     {notifInnerTab === k ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300'}"
+            >{lbl}</button>
+          {/each}
+        </div>
+
+        {#if notifLoading}
+          <div class="flex items-center justify-center py-12">
+            <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        {:else if notifInnerTab === 'providers'}
+          <!-- Provider list -->
+          <div class="flex justify-between items-center">
+            <div>
+              <label class="block text-xs font-medium text-gray-500 mb-1">Test-E-Mail-Adresse</label>
+              <input
+                type="email"
+                bind:value={testProviderEmail}
+                placeholder="test@example.com"
+                class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500 w-60"
+              />
+            </div>
+            <button
+              type="button"
+              onclick={() => showAddProviderModal = true}
+              class="flex items-center gap-2 text-sm bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2 rounded-lg transition-colors"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+              </svg>
+              Anbieter hinzufügen
+            </button>
+          </div>
+
+          {#if notifProviders.length === 0}
+            <div class="bg-gray-900 border border-gray-800 rounded-xl flex flex-col items-center justify-center py-12 gap-2">
+              <svg class="w-8 h-8 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+              </svg>
+              <p class="text-gray-500 text-sm">Noch kein E-Mail-Anbieter konfiguriert</p>
+            </div>
+          {:else}
+            <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-gray-800">
+                    <th class="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                    <th class="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Typ</th>
+                    <th class="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th class="px-5 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-800/60">
+                  {#each notifProviders as provider (provider.id)}
+                    <tr class="hover:bg-gray-800/20 transition-colors">
+                      <td class="px-5 py-3.5">
+                        <div class="flex items-center gap-2">
+                          <span class="text-white font-medium">{provider.name}</span>
+                          {#if provider.is_default}
+                            <span class="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 ring-1 ring-blue-500/20">Standard</span>
+                          {/if}
+                        </div>
+                      </td>
+                      <td class="px-5 py-3.5">
+                        <span class="text-xs px-2 py-0.5 rounded-md font-medium bg-gray-700 text-gray-300">
+                          {PROVIDER_LABELS[provider.provider]}
+                        </span>
+                      </td>
+                      <td class="px-5 py-3.5">
+                        {#if testProviderResult[provider.id] === 'ok'}
+                          <span class="text-xs text-emerald-400">✓ OK</span>
+                        {:else if testProviderResult[provider.id]}
+                          <span class="text-xs text-red-400" title={testProviderResult[provider.id]}>✗ Fehler</span>
+                        {:else}
+                          <span class="text-xs text-gray-600">—</span>
+                        {/if}
+                      </td>
+                      <td class="px-5 py-3.5">
+                        <div class="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onclick={() => testProvider(provider.id)}
+                            disabled={testingProviderId === provider.id || !testProviderEmail}
+                            class="text-xs px-2.5 py-1 rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors disabled:opacity-40"
+                          >
+                            {testingProviderId === provider.id ? 'Sende…' : 'Test'}
+                          </button>
+                          <button
+                            type="button"
+                            onclick={() => deleteProvider(provider.id)}
+                            class="text-xs px-2.5 py-1 rounded-lg border border-red-900/40 text-red-400 hover:bg-red-500/10 transition-colors"
+                          >Löschen</button>
+                        </div>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+
+        {:else if notifInnerTab === 'rules'}
+          <!-- Rules list -->
+          <div class="flex justify-end">
+            <button
+              type="button"
+              onclick={() => showAddRuleModal = true}
+              class="flex items-center gap-2 text-sm bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2 rounded-lg transition-colors"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+              </svg>
+              Regel hinzufügen
+            </button>
+          </div>
+
+          {#if notifRules.length === 0}
+            <div class="bg-gray-900 border border-gray-800 rounded-xl flex flex-col items-center justify-center py-12 gap-2">
+              <svg class="w-8 h-8 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+              </svg>
+              <p class="text-gray-500 text-sm">Noch keine Regeln konfiguriert</p>
+            </div>
+          {:else}
+            <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-gray-800">
+                    <th class="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                    <th class="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Typ</th>
+                    <th class="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Empfänger</th>
+                    <th class="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Aktiv</th>
+                    <th class="px-5 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-800/60">
+                  {#each notifRules as rule (rule.id)}
+                    {@const recipients = JSON.parse(rule.recipients) as string[]}
+                    <tr class="hover:bg-gray-800/20 transition-colors">
+                      <td class="px-5 py-3.5 text-white font-medium">{rule.name}</td>
+                      <td class="px-5 py-3.5">
+                        {#if rule.trigger_type === 'event'}
+                          <span class="text-xs px-2 py-0.5 rounded-md font-medium bg-purple-500/10 text-purple-400 ring-1 ring-purple-500/20">Event</span>
+                        {:else if rule.schedule_type === 'weekly'}
+                          <span class="text-xs px-2 py-0.5 rounded-md font-medium bg-blue-500/10 text-blue-400 ring-1 ring-blue-500/20">Wöchentlich</span>
+                        {:else}
+                          <span class="text-xs px-2 py-0.5 rounded-md font-medium bg-teal-500/10 text-teal-400 ring-1 ring-teal-500/20">Monatlich</span>
+                        {/if}
+                      </td>
+                      <td class="px-5 py-3.5 text-gray-400 text-xs">{recipients.length} Empfänger</td>
+                      <td class="px-5 py-3.5">
+                        <button
+                          type="button"
+                          onclick={() => toggleRule(rule)}
+                          class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors
+                                 {rule.enabled ? 'bg-blue-600' : 'bg-gray-700'}"
+                          role="switch"
+                          aria-checked={!!rule.enabled}
+                        >
+                          <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform
+                                       {rule.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'}"></span>
+                        </button>
+                      </td>
+                      <td class="px-5 py-3.5">
+                        <button
+                          type="button"
+                          onclick={() => deleteRule(rule.id)}
+                          class="text-xs px-2.5 py-1 rounded-lg border border-red-900/40 text-red-400 hover:bg-red-500/10 transition-colors"
+                        >Löschen</button>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+
+        {:else}
+          <!-- Log -->
+          {#if notifLog.length === 0}
+            <div class="bg-gray-900 border border-gray-800 rounded-xl flex flex-col items-center justify-center py-12 gap-2">
+              <p class="text-gray-500 text-sm">Noch keine Benachrichtigungen versendet</p>
+            </div>
+          {:else}
+            <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-gray-800">
+                    <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Zeit</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Betreff</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Empfänger</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-800/60">
+                  {#each notifLog as entry (entry.id)}
+                    {@const rcpt = JSON.parse(entry.recipients) as string[]}
+                    <tr class="hover:bg-gray-800/20 transition-colors">
+                      <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap font-mono">{formatDateTime(entry.created_at)}</td>
+                      <td class="px-4 py-3 text-gray-300 text-xs max-w-xs truncate">{entry.subject}</td>
+                      <td class="px-4 py-3 text-gray-400 text-xs">{rcpt.join(', ')}</td>
+                      <td class="px-4 py-3">
+                        {#if entry.status === 'sent'}
+                          <span class="text-xs px-2 py-0.5 rounded-md font-medium bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20">gesendet</span>
+                        {:else}
+                          <span
+                            class="text-xs px-2 py-0.5 rounded-md font-medium bg-red-500/10 text-red-400 ring-1 ring-red-500/20 cursor-help"
+                            title={entry.error_message ?? ''}
+                          >fehlgeschlagen</span>
+                        {/if}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        {/if}
+      </div>
+    {/if}
+
     {#if activeTab === 'permissions'}
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
@@ -1050,5 +1468,252 @@
     >
       {resettingPassword ? 'Resetting…' : 'Reset Password'}
     </button>
+  {/snippet}
+</Modal>
+
+<!-- Add Provider Modal -->
+<Modal open={showAddProviderModal} title="E-Mail-Anbieter hinzufügen" onclose={() => showAddProviderModal = false}>
+  {#snippet children()}
+    <div class="space-y-4">
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5">Name</label>
+        <input
+          type="text" bind:value={newProviderName} placeholder="z.B. Firmen-SMTP"
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+        />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5">Anbieter-Typ</label>
+        <select
+          bind:value={newProviderType}
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+        >
+          <option value="smtp">SMTP</option>
+          <option value="sendgrid">SendGrid</option>
+          <option value="mailgun">Mailgun</option>
+          <option value="resend">Resend</option>
+          <option value="ses">AWS SES</option>
+        </select>
+      </div>
+
+      {#if newProviderType === 'smtp'}
+        <div class="grid grid-cols-2 gap-3">
+          <div class="col-span-2 sm:col-span-1">
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Host</label>
+            <input type="text" bind:value={npSmtpHost} placeholder="smtp.example.com"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Port</label>
+            <input type="number" bind:value={npSmtpPort} min="1" max="65535"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+          </div>
+          <div class="col-span-2 sm:col-span-1">
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Benutzername</label>
+            <input type="text" bind:value={npSmtpUser}
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Passwort</label>
+            <input type="password" bind:value={npSmtpPass}
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+          </div>
+          <div class="col-span-2 flex items-center gap-2">
+            <input type="checkbox" id="smtp-secure" bind:checked={npSmtpSecure} class="rounded border-gray-600 bg-gray-700 text-blue-500"/>
+            <label for="smtp-secure" class="text-sm text-gray-300">TLS/SSL (Port 465)</label>
+          </div>
+        </div>
+      {:else if newProviderType === 'mailgun'}
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1.5">API Key</label>
+          <input type="password" bind:value={npApiKey} placeholder="key-..."
+            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Domain</label>
+            <input type="text" bind:value={npMailgunDomain} placeholder="mg.example.com"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Region</label>
+            <select bind:value={npMailgunRegion}
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+              <option value="us">US</option>
+              <option value="eu">EU</option>
+            </select>
+          </div>
+        </div>
+      {:else if newProviderType === 'ses'}
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Access Key ID</label>
+            <input type="text" bind:value={npSesAccessKey}
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Secret Key</label>
+            <input type="password" bind:value={npSesSecretKey}
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+          </div>
+          <div class="col-span-2">
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Region</label>
+            <input type="text" bind:value={npSesRegion} placeholder="eu-central-1"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+          </div>
+        </div>
+      {:else}
+        <!-- SendGrid / Resend -->
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1.5">API Key</label>
+          <input type="password" bind:value={npApiKey}
+            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+        </div>
+      {/if}
+
+      <!-- Shared from/name fields -->
+      <div class="grid grid-cols-2 gap-3 pt-1 border-t border-gray-800">
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1.5">Von-Adresse</label>
+          <input type="email" bind:value={npFromAddress} placeholder="noreply@example.com"
+            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-1.5">Absender-Name</label>
+          <input type="text" bind:value={npFromName}
+            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <input type="checkbox" id="provider-default" bind:checked={newProviderIsDefault} class="rounded border-gray-600 bg-gray-700 text-blue-500"/>
+        <label for="provider-default" class="text-sm text-gray-300">Als Standard-Anbieter verwenden</label>
+      </div>
+    </div>
+  {/snippet}
+  {#snippet footer()}
+    <button
+      onclick={() => showAddProviderModal = false}
+      class="px-4 py-2 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-800 rounded-lg transition-colors border border-gray-700"
+    >Abbrechen</button>
+    <button
+      onclick={addProvider}
+      disabled={addingProvider || !newProviderName || !npFromAddress}
+      class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-lg transition-colors"
+    >{addingProvider ? 'Speichern…' : 'Anbieter speichern'}</button>
+  {/snippet}
+</Modal>
+
+<!-- Add Rule Modal -->
+<Modal open={showAddRuleModal} title="Benachrichtigungsregel hinzufügen" onclose={() => showAddRuleModal = false}>
+  {#snippet children()}
+    <div class="space-y-4">
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5">Name</label>
+        <input type="text" bind:value={newRuleName} placeholder="z.B. Backup-Fehler-Alarm"
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5">E-Mail-Anbieter</label>
+        <select bind:value={newRuleProviderId}
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+          <option value="">Standard-Anbieter</option>
+          {#each notifProviders as p (p.id)}
+            <option value={p.id}>{p.name} ({PROVIDER_LABELS[p.provider]})</option>
+          {/each}
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5">Auslöser</label>
+        <div class="flex gap-2">
+          {#each ([['event', 'Event-basiert'], ['schedule', 'Geplant']] as const) as [v, lbl]}
+            <button type="button"
+              onclick={() => newRuleTrigger = v}
+              class="flex-1 py-2 text-sm rounded-lg border transition-colors
+                     {newRuleTrigger === v ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-700 text-gray-400 hover:text-white'}"
+            >{lbl}</button>
+          {/each}
+        </div>
+      </div>
+
+      {#if newRuleTrigger === 'event'}
+        <div>
+          <label class="block text-xs font-medium text-gray-400 mb-2">Ereignisse</label>
+          <div class="space-y-1.5">
+            {#each EVENT_OPTIONS as opt}
+              <label class="flex items-center gap-2.5 cursor-pointer hover:bg-gray-800/60 px-2 py-1.5 rounded-lg">
+                <input type="checkbox"
+                  checked={newRuleEvents.includes(opt.value)}
+                  onchange={() => {
+                    if (newRuleEvents.includes(opt.value)) {
+                      newRuleEvents = newRuleEvents.filter(e => e !== opt.value);
+                    } else {
+                      newRuleEvents = [...newRuleEvents, opt.value];
+                    }
+                  }}
+                  class="rounded border-gray-600 bg-gray-700 text-blue-500"
+                />
+                <span class="text-sm text-gray-300">{opt.label}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+      {:else}
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Typ</label>
+            <select bind:value={newRuleScheduleType}
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+              <option value="weekly">Wöchentlich</option>
+              <option value="monthly">Monatlich</option>
+            </select>
+          </div>
+          <div>
+            {#if newRuleScheduleType === 'weekly'}
+              <label class="block text-xs font-medium text-gray-400 mb-1.5">Wochentag</label>
+              <select bind:value={newRuleScheduleDay}
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+                {#each WEEKDAYS as day, i}
+                  <option value={i}>{day}</option>
+                {/each}
+              </select>
+            {:else}
+              <label class="block text-xs font-medium text-gray-400 mb-1.5">Tag des Monats</label>
+              <input type="number" min="1" max="28" bind:value={newRuleScheduleDay}
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+            {/if}
+          </div>
+          <div class="col-span-2">
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Uhrzeit</label>
+            <select bind:value={newRuleScheduleHour}
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+              {#each Array.from({ length: 24 }, (_, i) => i) as h}
+                <option value={h}>{String(h).padStart(2, '0')}:00 Uhr</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+      {/if}
+
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1.5">
+          Empfänger <span class="text-gray-600 font-normal">(kommagetrennt)</span>
+        </label>
+        <input type="text" bind:value={newRuleRecipientsRaw}
+          placeholder="alice@example.com, bob@example.com"
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"/>
+      </div>
+    </div>
+  {/snippet}
+  {#snippet footer()}
+    <button
+      onclick={() => showAddRuleModal = false}
+      class="px-4 py-2 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-800 rounded-lg transition-colors border border-gray-700"
+    >Abbrechen</button>
+    <button
+      onclick={addRule}
+      disabled={addingRule || !newRuleName || !newRuleRecipientsRaw}
+      class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-lg transition-colors"
+    >{addingRule ? 'Speichern…' : 'Regel speichern'}</button>
   {/snippet}
 </Modal>
