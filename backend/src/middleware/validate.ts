@@ -16,9 +16,14 @@ export function validate<T>(
       res.status(400).json({ error: msg });
       return;
     }
-    // Replace with coerced/stripped value so handlers get clean data
+    // Merge coerced/stripped value back.  For 'params' we must merge (not
+    // replace) because mergeParams: true puts parent params (e.g. repoId) into
+    // req.params — stripping them would make nested routers lose context.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (req as any)[source] = result.data;
+    (req as any)[source] =
+      source === 'params'
+        ? { ...req.params, ...(result.data as object) }
+        : result.data;
     next();
   };
 }
