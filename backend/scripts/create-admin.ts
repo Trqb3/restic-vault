@@ -12,7 +12,7 @@
  */
 
 import 'dotenv/config';
-import { getDb } from '../src/db/index.js';
+import { getDb } from '../src/db';
 import bcrypt from 'bcrypt';
 
 const username = process.argv[2] as string | undefined;
@@ -34,7 +34,7 @@ if (password.length < 8) {
   process.exit(1);
 }
 
-async function main() {
+async function main(): Promise<void> {
   try {
     // getDb() auto-runs migrations so the DB is always ready
     const db = getDb();
@@ -66,4 +66,4 @@ async function main() {
   }
 }
 
-main();
+main().then((): void => {});
