@@ -113,9 +113,6 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 source "$CONFIG_FILE"
 
 # Build restic repo URL with the token embedded as HTTP Basic Auth credentials.
-# This avoids --header (only available in restic >= 0.14.0) while still passing
-# the token through to the ResticVault proxy, which validates it before forwarding
-# to the internal rest-server.
 _RV_PROTO="https"
 [[ "${RV_SERVER}" == http://* ]] && _RV_PROTO="http"
 _RV_HOST="${RV_SERVER#https://}"
@@ -147,18 +144,13 @@ run_backup() {
 
   # Fetch config from server (paths + exclusions)
   CONFIG_JSON="$(rv_get config 2>/dev/null || echo '{}')"
-  # Strip the key name before extracting quoted values so the key itself isn't
-  # treated as a path/pattern (e.g. "backupPaths":[] → [] → no matches → "")
   SERVER_PATHS="$(echo "$CONFIG_JSON" | grep -o '"backupPaths":\[[^]]*\]' | sed 's/^"backupPaths"://' | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ' ' || echo "")"
   EXCLUDE_PATTERNS="$(echo "$CONFIG_JSON" | grep -o '"excludePatterns":\[[^]]*\]' | sed 's/^"excludePatterns"://' | grep -o '"[^"]*"' | tr -d '"' || echo "")"
 
-  # Use server-configured paths if available, else fallback to local config
-  # (After the sed fix above, SERVER_PATHS is empty when the array is empty)
   BACKUP_PATHS_ARG=""
   if [[ -n "${SERVER_PATHS// /}" ]]; then
     BACKUP_PATHS_ARG="$SERVER_PATHS"
   else
-    # Convert comma-separated RV_PATHS to space-separated
     BACKUP_PATHS_ARG="${RV_PATHS//,/ }"
   fi
 
@@ -183,20 +175,19 @@ run_backup() {
       >> "$LOG_FILE" 2>&1 && STATUS="success" || ERROR_MSG="restic exited with code $?"
 
   if [[ "$STATUS" == "success" ]]; then
-    # Extract snapshot ID from log (last JSON summary line)
     SNAPSHOT_ID="$(grep -o '"snapshot_id":"[^"]*"' "$LOG_FILE" | tail -1 | cut -d'"' -f4 || echo "")"
     log "Backup succeeded. Snapshot: $SNAPSHOT_ID"
   else
     log "Backup failed: $ERROR_MSG"
   fi
 
+  # Build result JSON without double braces
   local result_data
-  result_data="$(printf '{"status":"%s","errorMessage":"%s","snapshotId":"%s"' \
-    "$STATUS" "$ERROR_MSG" "$SNAPSHOT_ID")"
   if [[ -n "$command_id" ]]; then
-    result_data="${result_data},\"commandId\":${command_id}"
+    result_data="{\"status\":\"${STATUS}\",\"errorMessage\":\"${ERROR_MSG}\",\"snapshotId\":\"${SNAPSHOT_ID}\",\"commandId\":${command_id}}"
+  else
+    result_data="{\"status\":\"${STATUS}\",\"errorMessage\":\"${ERROR_MSG}\",\"snapshotId\":\"${SNAPSHOT_ID}\"}"
   fi
-  result_data="${result_data}}"
   rv_post backup-result "$result_data"
 }
 
@@ -231,16 +222,16 @@ run_daemon() {
   log "Agent starting. Connecting to ${RV_SERVER} as '${RV_NAME}' ..."
 
   AGENT_VERSION="1.0.0"
-  rv_post heartbeat "{\"agentVersion\":\"${AGENT_VERSION}\"}"
+  rv_post heartbeat "{\"agentVersion\":\"${AGENT_VERSION}\",\"name\":\"${RV_NAME}\"}"
 
   # Try to init repo (idempotent — safe to run on existing repo)
   init_repo
 
   while true; do
     # Send heartbeat
-    rv_post heartbeat "{\"agentVersion\":\"${AGENT_VERSION}\"}" > /dev/null
+    rv_post heartbeat "{\"agentVersion\":\"${AGENT_VERSION}\",\"name\":\"${RV_NAME}\"}"
 
-    # Poll for commands (30-second long poll)
+    # Poll for commands
     RESPONSE="$(rv_get poll 2>/dev/null || echo '{}')"
     CMD_TYPE="$(echo "$RESPONSE" | grep -o '"command":"[^"]*"' | cut -d'"' -f4 || echo "")"
     CMD_ID="$(echo "$RESPONSE" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2 || echo "")"
@@ -250,7 +241,7 @@ run_daemon() {
 
       # Acknowledge
       if [[ -n "$CMD_ID" ]]; then
-        rv_post ack "{\"commandId\":${CMD_ID}}" > /dev/null
+        rv_post ack "{\"commandId\":${CMD_ID},\"status\":\"received\"}"
       fi
 
       case "$CMD_TYPE" in
@@ -258,9 +249,11 @@ run_daemon() {
         discover) run_discover ;;
         uninstall)
           log "Uninstall command received. Stopping agent..."
-          systemctl stop resticvault-agent.timer resticvault-agent.service 2>/dev/null || true
-          systemctl disable resticvault-agent.timer resticvault-agent.service 2>/dev/null || true
-          rm -f /etc/systemd/system/resticvault-agent.{service,timer}
+          systemctl stop resticvault-agent-backup.timer resticvault-agent.service 2>/dev/null || true
+          systemctl disable resticvault-agent-backup.timer resticvault-agent.service 2>/dev/null || true
+          rm -f /etc/systemd/system/resticvault-agent.service
+          rm -f /etc/systemd/system/resticvault-agent-backup.service
+          rm -f /etc/systemd/system/resticvault-agent-backup.timer
           rm -f /usr/local/bin/resticvault-agent
           rm -rf /etc/resticvault-agent
           systemctl daemon-reload 2>/dev/null || true
@@ -272,6 +265,8 @@ run_daemon() {
           ;;
       esac
     fi
+
+    sleep 30
   done
 }
 
@@ -295,7 +290,6 @@ chmod +x "$AGENT_SCRIPT"
 echo "Agent script written to $AGENT_SCRIPT"
 
 # ── Convert cron schedule to systemd OnCalendar ──────────────────────────────
-# Simple conversion for common patterns
 cron_to_calendar() {
   local cron_expr="$1"
   case "$cron_expr" in
@@ -306,7 +300,6 @@ cron_to_calendar() {
     "0 0 * * 0")    echo "weekly" ;;
     "0 0 1 * *")    echo "monthly" ;;
     *)
-      # Parse: min hour dom month dow
       read -r min hour dom month dow <<< "$cron_expr"
       local time_part="${hour}:${min}:00"
       echo "*-*-* ${time_part}"
@@ -381,5 +374,6 @@ echo "Backup timer:   resticvault-agent-backup.timer (${ONCALENDAR})"
 echo ""
 echo "Check status:   systemctl status resticvault-agent"
 echo "View logs:      journalctl -u resticvault-agent -f"
+echo "               tail -f /var/log/resticvault-agent/agent.log"
 echo ""
 echo "The agent will connect to ${RV_SERVER} and begin heartbeating."
