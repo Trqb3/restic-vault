@@ -66,8 +66,17 @@
   let configPassword = $state('');
   let configSaving = $state(false);
 
-  onMount(async () => {
-    await load();
+  onMount(() => {
+    load();
+    const timer = setInterval(() => {
+      // Silent refresh — don't show loading spinner if already loaded
+      if (repo) {
+        Promise.all([reposApi.get(repoId), snapshotsApi.list(repoId)])
+          .then(([r, s]) => { repo = r; snapshotList = s; snapshotStats = buildPreloadedStats(s); })
+          .catch(() => {});
+      }
+    }, 30_000);
+    return () => clearInterval(timer);
   });
 
   async function load() {
