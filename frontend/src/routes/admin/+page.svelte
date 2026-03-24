@@ -252,26 +252,55 @@
   let loadingPerms = $state(false);
   let savingPerms = $state(false);
 
-  onMount(async () => {
+  async function refreshActiveTab() {
+    // Silently refresh only the data relevant to the active tab
     try {
-      const me = await auth.me();
-      role = me.role;
-      if (me.role !== 'admin') { loading = false; return; }
-      const [u, r, ssh, s, as_] = await Promise.all([
-        adminApi.listUsers(), reposApi.list(), adminApi.listSshConnections(), settings.get(), adminApi.getAuditStats(),
-      ]);
-      users = u;
-      repoList = r;
-      sshConnections = ssh;
-      baseDir = s.baseDir;
-      indexInterval = s.indexIntervalMinutes;
-      currentInterval = s.indexIntervalMinutes;
-      auditStats = as_;
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to load admin data');
-    } finally {
-      loading = false;
-    }
+      if (activeTab === 'users' || activeTab === 'permissions') {
+        users = await adminApi.listUsers();
+      } else if (activeTab === 'ssh') {
+        sshConnections = await adminApi.listSshConnections();
+      } else if (activeTab === 'logs') {
+        const [as_, lg] = await Promise.all([
+          adminApi.getAuditStats(),
+          adminApi.getAuditLogs({ limit: AUDIT_PAGE_SIZE, offset: auditOffset, eventType: auditFilterType || undefined, username: auditFilterUser || undefined, success: auditFilterSuccess !== '' ? (auditFilterSuccess as '0' | '1') : undefined }),
+        ]);
+        auditStats = as_;
+        auditLogs = lg.rows;
+        auditTotal = lg.total;
+      } else if (activeTab === 'notifications') {
+        const [p, r, l] = await Promise.all([
+          notificationsApi.getProviders(), notificationsApi.getRules(), notificationsApi.getLog(),
+        ]);
+        notifProviders = p; notifRules = r; notifLog = l;
+      }
+    } catch { /* best-effort silent refresh */ }
+  }
+
+  onMount(() => {
+    (async () => {
+      try {
+        const me = await auth.me();
+        role = me.role;
+        if (me.role !== 'admin') { loading = false; return; }
+        const [u, r, ssh, s, as_] = await Promise.all([
+          adminApi.listUsers(), reposApi.list(), adminApi.listSshConnections(), settings.get(), adminApi.getAuditStats(),
+        ]);
+        users = u;
+        repoList = r;
+        sshConnections = ssh;
+        baseDir = s.baseDir;
+        indexInterval = s.indexIntervalMinutes;
+        currentInterval = s.indexIntervalMinutes;
+        auditStats = as_;
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to load admin data');
+      } finally {
+        loading = false;
+      }
+    })();
+
+    const timer = setInterval(refreshActiveTab, 60_000);
+    return () => clearInterval(timer);
   });
 
   async function addUser() {
