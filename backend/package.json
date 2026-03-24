@@ -7,8 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc --project tsconfig.json",
     "start": "node dist/src/index.js",
-    "create-admin": "tsx scripts/create-admin.ts",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "create-admin": "tsx scripts/create-admin.ts"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.1014.0",
