@@ -250,6 +250,12 @@ function migrate(db: Database.Database): void {
     `ALTER TABLE repo_stats ADD COLUMN compression_ratio REAL`,
     `ALTER TABLE repo_stats ADD COLUMN total_blob_count  INTEGER`,
     `ALTER TABLE repositories ADD COLUMN connection_id INTEGER REFERENCES ssh_connections(id) ON DELETE SET NULL`,
+    `ALTER TABLE backup_sources ADD COLUMN schedule     TEXT    DEFAULT '0 2 * * *'`,
+    `ALTER TABLE backup_sources ADD COLUMN keep_last    INTEGER DEFAULT NULL`,
+    `ALTER TABLE backup_sources ADD COLUMN keep_daily   INTEGER DEFAULT 7`,
+    `ALTER TABLE backup_sources ADD COLUMN keep_weekly  INTEGER DEFAULT 4`,
+    `ALTER TABLE backup_sources ADD COLUMN keep_monthly INTEGER DEFAULT 6`,
+    `ALTER TABLE backup_sources ADD COLUMN keep_yearly  INTEGER DEFAULT 1`,
   ];
   for (const sql of alterations) {
     try {
@@ -457,6 +463,12 @@ export interface BackupSource {
   last_seen_at: number | null;
   last_backup_at: number | null;
   agent_version: string | null;
+  schedule: string;
+  keep_last: number | null;
+  keep_daily: number | null;
+  keep_weekly: number | null;
+  keep_monthly: number | null;
+  keep_yearly: number | null;
   created_at: number;
 }
 

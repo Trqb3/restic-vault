@@ -1,11 +1,13 @@
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
+import fs from 'fs';
 import type { Response } from 'express';
 
 const execFileAsync = promisify(execFile);
 
 const RESTIC_BIN = process.env.RESTIC_BINARY || 'restic';
 const MAX_BUFFER = 200 * 1024 * 1024; // 200MB
+const EXEC_TIMEOUT = parseInt(process.env.RESTIC_TIMEOUT || '120000', 10); // 2 min default
 
 // Summary embedded in every snapshot created by restic backup --json.
 // Available via `restic snapshots --json` — no extra restic calls needed.
@@ -55,14 +57,35 @@ export interface ResticNode {
   subtree?: string;
 }
 
-function buildEnv(repoPath: string, password?: string): NodeJS.ProcessEnv {
+interface EnvResult {
+  env: NodeJS.ProcessEnv;
+  /** Extra CLI args to prepend (e.g. --insecure-no-password for passwordless repos) */
+  implicitArgs: string[];
+}
+
+function buildEnv(repoPath: string, password?: string): EnvResult {
   const env: NodeJS.ProcessEnv = { ...process.env, RESTIC_REPOSITORY: repoPath };
+  // Remove any overrides that would take precedence over RESTIC_PASSWORD
+  delete env.RESTIC_PASSWORD_FILE;
+  delete env.RESTIC_PASSWORD_COMMAND;
+  // Remove RESTIC_REPOSITORY_FILE too — our explicit value must win
+  delete env.RESTIC_REPOSITORY_FILE;
+
+  const implicitArgs: string[] = [];
+
   if (password) {
+    // Encrypted repo — use the actual password
     env.RESTIC_PASSWORD = password;
+    console.log(`[restic] buildEnv repo=${repoPath} passwordMode=encrypted`);
   } else {
-    delete env.RESTIC_PASSWORD;
+    // Passwordless repo — use BOTH env var AND CLI flag for maximum compatibility.
+    // Some restic versions ignore RESTIC_PASSWORD="" but respect --insecure-no-password.
+    env.RESTIC_PASSWORD = '';
+    implicitArgs.push('--insecure-no-password');
+    console.log(`[restic] buildEnv repo=${repoPath} passwordMode=insecure-no-password`);
   }
-  return env;
+
+  return { env, implicitArgs };
 }
 
 export async function listSnapshots(
@@ -70,14 +93,53 @@ export async function listSnapshots(
   password?: string,
   extraArgs: string[] = []
 ): Promise<ResticSnapshot[]> {
-  const env = buildEnv(repoPath, password);
-  const { stdout } = await execFileAsync(
-    RESTIC_BIN,
-    [...extraArgs, 'snapshots', '--json', '--no-lock'],
-    { env, maxBuffer: MAX_BUFFER }
-  );
-  const parsed = JSON.parse(stdout.trim() || '[]');
-  return Array.isArray(parsed) ? parsed : [];
+  const { env, implicitArgs } = buildEnv(repoPath, password);
+  const args = [...implicitArgs, ...extraArgs, 'snapshots', '--json', '--no-lock', '--no-cache'];
+  console.log(`[restic] listSnapshots cmd: ${RESTIC_BIN} ${args.join(' ')} | repo=${repoPath}`);
+
+  // Pre-flight: verify the repo directory exists and looks like a restic repo
+  if (!repoPath.startsWith('rest:') && !repoPath.startsWith('sftp:') &&
+      !repoPath.startsWith('s3:') && !repoPath.startsWith('b2:') &&
+      !repoPath.startsWith('azure:') && !repoPath.startsWith('gs:') &&
+      !repoPath.includes('://')) {
+    try {
+      const entries = fs.readdirSync(repoPath);
+      const hasConfig = entries.includes('config');
+      const hasData = entries.includes('data');
+      console.log(`[restic] listSnapshots repo-check: path=${repoPath} entries=[${entries.join(',')}] hasConfig=${hasConfig} hasData=${hasData}`);
+      if (!hasConfig || !hasData) {
+        console.error(`[restic] listSnapshots: ${repoPath} does not look like a restic repo (missing config or data dir)`);
+        return [];
+      }
+    } catch (fsErr) {
+      console.error(`[restic] listSnapshots: cannot read repo dir ${repoPath}: ${fsErr instanceof Error ? fsErr.message : fsErr}`);
+      throw new Error(`Cannot access repo directory: ${repoPath}`);
+    }
+  }
+
+  const startTime = Date.now();
+  try {
+    const { stdout } = await execFileAsync(RESTIC_BIN, args, {
+      env,
+      maxBuffer: MAX_BUFFER,
+      timeout: EXEC_TIMEOUT,
+    });
+    const elapsed = Date.now() - startTime;
+    const parsed = JSON.parse(stdout.trim() || '[]');
+    const result = Array.isArray(parsed) ? parsed : [];
+    console.log(`[restic] listSnapshots result: ${result.length} snapshots (${elapsed}ms)`);
+    return result;
+  } catch (err) {
+    const elapsed = Date.now() - startTime;
+    const e = err as Error & { stderr?: string; code?: number; killed?: boolean; signal?: string };
+    if (e.killed || e.signal === 'SIGTERM') {
+      console.error(`[restic] listSnapshots KILLED after ${elapsed}ms (timeout=${EXEC_TIMEOUT}ms) repo=${repoPath}`);
+    } else {
+      console.error(`[restic] listSnapshots FAILED (exit ${e.code ?? '?'}, ${elapsed}ms): ${e.message}`);
+    }
+    if (e.stderr) console.error(`[restic] listSnapshots stderr: ${e.stderr.slice(0, 1000)}`);
+    throw err;
+  }
 }
 
 export async function listFiles(
@@ -87,11 +149,12 @@ export async function listFiles(
   password?: string,
   extraArgs: string[] = []
 ): Promise<{ snapshot: ResticSnapshot | null; nodes: ResticNode[] }> {
-  const env = buildEnv(repoPath, password);
-  const args = [...extraArgs, 'ls', '--json', '--no-lock', snapshotId, '--', dirPath];
+  const { env, implicitArgs } = buildEnv(repoPath, password);
+  const args = [...implicitArgs, ...extraArgs, 'ls', '--json', '--no-lock', '--no-cache', snapshotId, '--', dirPath];
   const { stdout } = await execFileAsync(RESTIC_BIN, args, {
     env,
     maxBuffer: MAX_BUFFER,
+    timeout: EXEC_TIMEOUT,
   });
 
   const lines = stdout.trim().split('\n').filter(Boolean);
@@ -128,8 +191,8 @@ function spawnResticDump(
   label: string,
   extraArgs: string[] = []
 ): void {
-  const env = buildEnv(repoPath, password);
-  const fullArgs = [...extraArgs, ...args];
+  const { env, implicitArgs } = buildEnv(repoPath, password);
+  const fullArgs = [...implicitArgs, ...extraArgs, ...args];
   console.log(`[restic] ${label} args:`, fullArgs, '| repo:', repoPath);
   const proc = spawn(RESTIC_BIN, fullArgs, { env });
 
@@ -197,11 +260,11 @@ export async function deleteSnapshots(
   snapshotIds: string[],
   password?: string
 ): Promise<void> {
-  const env = buildEnv(repoPath, password);
+  const { env, implicitArgs } = buildEnv(repoPath, password);
   await execFileAsync(
     RESTIC_BIN,
-    ['forget', '--prune', ...snapshotIds],
-    { env, maxBuffer: MAX_BUFFER }
+    [...implicitArgs, 'forget', '--prune', ...snapshotIds],
+    { env, maxBuffer: MAX_BUFFER, timeout: EXEC_TIMEOUT * 5 }  // prune can take much longer
   );
 }
 
@@ -210,10 +273,11 @@ export async function checkRepo(
   password?: string
 ): Promise<boolean> {
   try {
-    const env = buildEnv(repoPath, password);
-    await execFileAsync(RESTIC_BIN, ['snapshots', '--json', '--no-lock'], {
+    const { env, implicitArgs } = buildEnv(repoPath, password);
+    await execFileAsync(RESTIC_BIN, [...implicitArgs, 'snapshots', '--json', '--no-lock', '--no-cache'], {
       env,
       maxBuffer: 1024 * 1024,
+      timeout: 30_000,  // quick check — 30s is plenty
     });
     return true;
   } catch {
@@ -236,17 +300,27 @@ export async function getRepoStats(
   mode?: string,
   extraArgs: string[] = []
 ): Promise<ResticStats> {
-  const env = buildEnv(repoPath, password);
-  const args = [...extraArgs, 'stats', '--json', '--no-lock'];
+  const { env, implicitArgs } = buildEnv(repoPath, password);
+  const args = [...implicitArgs, ...extraArgs, 'stats', '--json', '--no-lock'];
   if (mode) args.push('--mode', mode);
-  const { stdout } = await execFileAsync(RESTIC_BIN, args, { env, maxBuffer: MAX_BUFFER });
-  const data = JSON.parse(stdout.trim()) as Record<string, unknown>;
-  return {
-    total_size: (data.total_size as number) ?? 0,
-    total_file_count: (data.total_file_count as number | undefined) ?? null,
-    total_blob_count: (data.total_blob_count as number | undefined) ?? null,
-    compression_ratio: (data.compression_ratio as number | undefined) ?? null,
-  };
+  console.log(`[restic] getRepoStats cmd: ${RESTIC_BIN} ${args.join(' ')} | repo=${repoPath}`);
+  try {
+    const { stdout } = await execFileAsync(RESTIC_BIN, args, { env, maxBuffer: MAX_BUFFER, timeout: EXEC_TIMEOUT });
+    const data = JSON.parse(stdout.trim()) as Record<string, unknown>;
+    const result = {
+      total_size: (data.total_size as number) ?? 0,
+      total_file_count: (data.total_file_count as number | undefined) ?? null,
+      total_blob_count: (data.total_blob_count as number | undefined) ?? null,
+      compression_ratio: (data.compression_ratio as number | undefined) ?? null,
+    };
+    console.log(`[restic] getRepoStats result: size=${result.total_size} files=${result.total_file_count} mode=${mode ?? 'default'}`);
+    return result;
+  } catch (err) {
+    const e = err as Error & { stderr?: string; code?: number };
+    console.error(`[restic] getRepoStats FAILED (exit ${e.code ?? '?'}, mode=${mode ?? 'default'}): ${e.message}`);
+    if (e.stderr) console.error(`[restic] getRepoStats stderr: ${e.stderr.slice(0, 500)}`);
+    throw err;
+  }
 }
 
 export interface SnapshotStatsResult {
@@ -260,11 +334,11 @@ export async function getSnapshotStats(
   password?: string,
   extraArgs: string[] = []
 ): Promise<SnapshotStatsResult> {
-  const env = buildEnv(repoPath, password);
+  const { env, implicitArgs } = buildEnv(repoPath, password);
   const { stdout } = await execFileAsync(
     RESTIC_BIN,
-    [...extraArgs, 'stats', '--json', '--no-lock', '--mode', 'restore-size', snapshotId],
-    { env, maxBuffer: MAX_BUFFER }
+    [...implicitArgs, ...extraArgs, 'stats', '--json', '--no-lock', '--mode', 'restore-size', snapshotId],
+    { env, maxBuffer: MAX_BUFFER, timeout: EXEC_TIMEOUT }
   );
   const data = JSON.parse(stdout.trim()) as Record<string, unknown>;
   return {
@@ -289,13 +363,13 @@ export async function getSnapshotDiff(
   password?: string,
   extraArgs: string[] = []
 ): Promise<DiffResult> {
-  const env = buildEnv(repoPath, password);
+  const { env, implicitArgs } = buildEnv(repoPath, password);
   let stdout: string;
   try {
     ({ stdout } = await execFileAsync(
       RESTIC_BIN,
-      [...extraArgs, 'diff', '--json', '--no-lock', parentId, snapshotId],
-      { env, maxBuffer: MAX_BUFFER }
+      [...implicitArgs, ...extraArgs, 'diff', '--json', '--no-lock', parentId, snapshotId],
+      { env, maxBuffer: MAX_BUFFER, timeout: EXEC_TIMEOUT }
     ));
   } catch (err: unknown) {
     const e = err as Error & { stderr?: string; code?: number };

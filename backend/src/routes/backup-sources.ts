@@ -1,13 +1,15 @@
 import { Router, type Request, type Response } from 'express';
+import path from 'path';
 import { z } from 'zod';
 import { getDb } from '../db/index.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { generateToken, verifyToken, cacheAuthResult, getCachedAuth, evictSourceFromCache } from '../services/token.js';
-import { ensureSourceDir } from '../services/rest-server.js';
+import { ensureSourceDir, getSourcesDir } from '../services/rest-server.js';
 import { auditLog } from '../services/audit.js';
 import { fireNotificationEvent } from '../services/notifications.js';
-import type { BackupSource, AgentCommand, SourceExclusionRule } from '../db/index.js';
+import { indexRepo } from '../services/indexer.js';
+import type { BackupSource, AgentCommand, SourceExclusionRule, Repository } from '../db/index.js';
 
 const router = Router();
 
@@ -19,8 +21,17 @@ const createSourceSchema = z.object({
 });
 
 const updateSourceSchema = z.object({
-  description: z.string().max(256).optional(),
-  disabled:    z.boolean().optional(),
+  description:  z.string().max(256).optional(),
+  disabled:     z.boolean().optional(),
+  schedule:     z.string().max(64).regex(
+    /^(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)$/,
+    'Invalid cron expression',
+  ).optional(),
+  keepLast:     z.number().int().min(0).max(9999).nullable().optional(),
+  keepDaily:    z.number().int().min(0).max(9999).nullable().optional(),
+  keepWeekly:   z.number().int().min(0).max(9999).nullable().optional(),
+  keepMonthly:  z.number().int().min(0).max(9999).nullable().optional(),
+  keepYearly:   z.number().int().min(0).max(9999).nullable().optional(),
 });
 
 const exclusionRuleSchema = z.object({
@@ -44,27 +55,83 @@ const backupResultSchema = z.object({
   snapshotId:   z.string().optional(),
 });
 
-// ── Admin: CRUD ───────────────────────────────────────────────────────────────
+const backupProgressSchema = z.object({
+  percentDone: z.number().min(0).max(1),
+  totalFiles:  z.number().int().nonnegative(),
+  filesDone:   z.number().int().nonnegative(),
+  totalBytes:  z.number().int().nonnegative(),
+  bytesDone:   z.number().int().nonnegative(),
+  currentFile: z.string().max(4096).transform(s => s.replace(/[\x00-\x1f\x7f]/g, '')).optional(),
+});
 
-/** GET /api/sources  — list all sources (admin only) */
-router.get('/', requireAuth, requireAdmin, (_req, res) => {
-  const rows = getDb().prepare(`
-    SELECT bs.*, r.name AS repo_name, r.path AS repo_path
-    FROM backup_sources bs
-    LEFT JOIN repositories r ON r.id = bs.repo_id
-    ORDER BY bs.created_at DESC
-  `).all();
-  res.json(rows);
+interface BackupProgress {
+  percentDone: number;
+  totalFiles: number;
+  filesDone: number;
+  totalBytes: number;
+  bytesDone: number;
+  currentFile: string;
+  updatedAt: number;
+}
+
+const progressStore = new Map<number, BackupProgress>();
+
+// Clean up stale progress entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, p] of progressStore) {
+    if (now - p.updatedAt > 300_000) progressStore.delete(id);
+  }
+}, 300_000);
+
+// ── Viewer permission helper ──────────────────────────────────────────────────
+
+/** Check if a non-admin user can access a source (via user_repo_permissions on the linked repo) */
+function canAccessSource(userId: number, role: string, sourceId: number): boolean {
+  if (role === 'admin') return true;
+  const src = getDb().prepare('SELECT repo_id FROM backup_sources WHERE id = ?').get(sourceId) as { repo_id: number | null } | undefined;
+  if (!src?.repo_id) return false;
+  return !!getDb().prepare('SELECT 1 FROM user_repo_permissions WHERE user_id = ? AND repo_id = ?').get(userId, src.repo_id);
+}
+
+// ── CRUD ──────────────────────────────────────────────────────────────────────
+
+/** GET /api/sources  — admin sees all; viewer sees only sources linked to their permitted repos */
+router.get('/', requireAuth, (req, res) => {
+  const user = (req as Request & { user: { userId: number; role: string } }).user;
+  if (user.role === 'admin') {
+    const rows = getDb().prepare(`
+      SELECT bs.*, r.name AS repo_name, r.path AS repo_path
+      FROM backup_sources bs
+      LEFT JOIN repositories r ON r.id = bs.repo_id
+      ORDER BY bs.created_at DESC
+    `).all();
+    res.json(rows);
+  } else {
+    const rows = getDb().prepare(`
+      SELECT bs.*, r.name AS repo_name, r.path AS repo_path
+      FROM backup_sources bs
+      LEFT JOIN repositories r ON r.id = bs.repo_id
+      INNER JOIN user_repo_permissions urp ON urp.repo_id = bs.repo_id AND urp.user_id = ?
+      ORDER BY bs.created_at DESC
+    `).all(user.userId);
+    res.json(rows);
+  }
 });
 
 /** GET /api/sources/:id */
-router.get('/:id', requireAuth, requireAdmin, (req, res) => {
+router.get('/:id', requireAuth, (req, res) => {
+  const user = (req as Request & { user: { userId: number; role: string } }).user;
+  const id = parseInt(req.params.id as string, 10);
+  if (!canAccessSource(user.userId, user.role, id)) {
+    res.status(403).json({ error: 'Forbidden' }); return;
+  }
   const row = getDb().prepare(`
     SELECT bs.*, r.name AS repo_name, r.path AS repo_path
     FROM backup_sources bs
     LEFT JOIN repositories r ON r.id = bs.repo_id
     WHERE bs.id = ?
-  `).get(parseInt(req.params.id as string, 10)) as (BackupSource & { repo_name: string | null; repo_path: string | null }) | undefined;
+  `).get(id) as (BackupSource & { repo_name: string | null; repo_path: string | null }) | undefined;
   if (!row) { res.status(404).json({ error: 'Not found' }); return; }
   res.json(row);
 });
@@ -109,18 +176,24 @@ router.patch('/:id', requireAuth, requireAdmin, validate(updateSourceSchema), (r
   const src = db.prepare('SELECT * FROM backup_sources WHERE id = ?').get(id) as BackupSource | undefined;
   if (!src) { res.status(404).json({ error: 'Not found' }); return; }
 
-  const { description, disabled } = req.body as z.infer<typeof updateSourceSchema>;
+  const { description, disabled, schedule, keepLast, keepDaily, keepWeekly, keepMonthly, keepYearly } = req.body as z.infer<typeof updateSourceSchema>;
 
-  db.prepare(`
-    UPDATE backup_sources SET
-      description = COALESCE(?, description),
-      disabled    = COALESCE(?, disabled)
-    WHERE id = ?
-  `).run(
-    description !== undefined ? description : null,
-    disabled    !== undefined ? (disabled ? 1 : 0) : null,
-    id,
-  );
+  const sets: string[] = [];
+  const params: unknown[] = [];
+
+  if (description !== undefined) { sets.push('description = ?'); params.push(description); }
+  if (disabled !== undefined)    { sets.push('disabled = ?');    params.push(disabled ? 1 : 0); }
+  if (schedule !== undefined)    { sets.push('schedule = ?');    params.push(schedule); }
+  if (keepLast !== undefined)    { sets.push('keep_last = ?');    params.push(keepLast); }
+  if (keepDaily !== undefined)   { sets.push('keep_daily = ?');   params.push(keepDaily); }
+  if (keepWeekly !== undefined)  { sets.push('keep_weekly = ?');  params.push(keepWeekly); }
+  if (keepMonthly !== undefined) { sets.push('keep_monthly = ?'); params.push(keepMonthly); }
+  if (keepYearly !== undefined)  { sets.push('keep_yearly = ?');  params.push(keepYearly); }
+
+  if (sets.length > 0) {
+    params.push(id);
+    db.prepare(`UPDATE backup_sources SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  }
 
   // If disabling, evict cached auth for this source
   if (disabled) evictSourceFromCache(id);
@@ -201,12 +274,15 @@ router.put('/:id/exclusion-rule', requireAuth, requireAdmin, validate(exclusionR
 // ── Logs ─────────────────────────────────────────────────────────────────────
 
 /** GET /api/sources/:id/logs */
-router.get('/:id/logs', requireAuth, requireAdmin, (req, res) => {
+router.get('/:id/logs', requireAuth, (req, res) => {
+  const user = (req as Request & { user: { userId: number; role: string } }).user;
+  const id = parseInt(req.params.id as string, 10);
+  if (!canAccessSource(user.userId, user.role, id)) { res.status(403).json({ error: 'Forbidden' }); return; }
   const limit  = Math.min(parseInt(String(req.query.limit  ?? '100'), 10), 500);
   const offset = parseInt(String(req.query.offset ?? '0'), 10);
   const rows   = getDb().prepare(
     'SELECT * FROM backup_source_logs WHERE source_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
-  ).all(parseInt(req.params.id as string, 10), limit, offset);
+  ).all(id, limit, offset);
   res.json(rows);
 });
 
@@ -236,21 +312,50 @@ router.post('/:id/commands', requireAuth, requireAdmin, (req, res) => {
 });
 
 /** GET /api/sources/:id/commands  — list commands */
-router.get('/:id/commands', requireAuth, requireAdmin, (req, res) => {
+router.get('/:id/commands', requireAuth, (req, res) => {
+  const user = (req as Request & { user: { userId: number; role: string } }).user;
+  const id = parseInt(req.params.id as string, 10);
+  if (!canAccessSource(user.userId, user.role, id)) { res.status(403).json({ error: 'Forbidden' }); return; }
   const rows = getDb().prepare(
     `SELECT * FROM agent_commands WHERE source_id = ? ORDER BY created_at DESC LIMIT 50`
-  ).all(parseInt(req.params.id as string, 10));
+  ).all(id);
   res.json(rows);
 });
 
 // ── Discovered paths ──────────────────────────────────────────────────────────
 
 /** GET /api/sources/:id/paths */
-router.get('/:id/paths', requireAuth, requireAdmin, (req, res) => {
+router.get('/:id/paths', requireAuth, (req, res) => {
+  const user = (req as Request & { user: { userId: number; role: string } }).user;
+  const id = parseInt(req.params.id as string, 10);
+  if (!canAccessSource(user.userId, user.role, id)) { res.status(403).json({ error: 'Forbidden' }); return; }
   const rows = getDb().prepare(
     `SELECT * FROM agent_discovered_paths WHERE source_id = ? ORDER BY path ASC`
-  ).all(parseInt(req.params.id as string, 10));
+  ).all(id);
   res.json(rows);
+});
+
+/** GET /api/sources/:id/progress — poll backup progress for this source */
+router.get('/:id/progress', requireAuth, (req, res) => {
+  const user = (req as Request & { user: { userId: number; role: string } }).user;
+  const id = parseInt(req.params.id as string, 10);
+  if (!canAccessSource(user.userId, user.role, id)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  const progress = progressStore.get(id);
+
+  if (!progress || (Date.now() - progress.updatedAt > 60_000)) {
+    res.json({ active: false });
+    return;
+  }
+
+  res.json({
+    active:      true,
+    percentDone: progress.percentDone,
+    totalFiles:  progress.totalFiles,
+    filesDone:   progress.filesDone,
+    totalBytes:  progress.totalBytes,
+    bytesDone:   progress.bytesDone,
+    currentFile: progress.currentFile,
+  });
 });
 
 // ── Agent endpoints (Bearer token auth, no session required) ─────────────────
@@ -259,11 +364,13 @@ router.get('/:id/paths', requireAuth, requireAdmin, (req, res) => {
 async function agentAuth(req: Request, res: Response, next: () => void): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
+    console.warn(`[agent-auth] Missing Bearer token on ${req.method} ${req.path}`);
     res.status(401).json({ error: 'Missing Bearer token' });
     return;
   }
   const raw = authHeader.slice(7);
   if (!raw.startsWith('rvs1_')) {
+    console.warn(`[agent-auth] Invalid token format on ${req.method} ${req.path}: prefix=${raw.slice(0, 8)}...`);
     res.status(401).json({ error: 'Invalid token format' });
     return;
   }
@@ -271,26 +378,37 @@ async function agentAuth(req: Request, res: Response, next: () => void): Promise
   // Check cache first
   const cached = getCachedAuth(raw);
   if (cached) {
-    if (cached.disabled) { res.status(403).json({ error: 'Source is disabled' }); return; }
+    if (cached.disabled) {
+      console.warn(`[agent-auth] Source ${cached.sourceId} is disabled (cached)`);
+      res.status(403).json({ error: 'Source is disabled' }); return;
+    }
     (req as Request & { sourceId: number }).sourceId = cached.sourceId;
     next();
     return;
   }
 
-  // Cache miss — do full bcrypt lookup
+  // Cache miss — do full bcrypt lookup (constant-time: always iterate all sources)
+  console.log(`[agent-auth] Cache miss, performing bcrypt lookup for ${req.method} ${req.path}`);
   const db      = getDb();
   const sources = db.prepare('SELECT id, token_hash, disabled FROM backup_sources').all() as Pick<BackupSource, 'id' | 'token_hash' | 'disabled'>[];
+  console.log(`[agent-auth] Checking ${sources.length} sources`);
 
+  let matched: Pick<BackupSource, 'id' | 'token_hash' | 'disabled'> | null = null;
   for (const src of sources) {
-    if (await verifyToken(raw, src.token_hash)) {
-      cacheAuthResult(raw, src.id, src.disabled === 1);
-      if (src.disabled) { res.status(403).json({ error: 'Source is disabled' }); return; }
-      (req as Request & { sourceId: number }).sourceId = src.id;
-      next();
-      return;
-    }
+    const isMatch = await verifyToken(raw, src.token_hash);
+    if (isMatch && !matched) matched = src;
   }
 
+  if (matched) {
+    console.log(`[agent-auth] Matched source ${matched.id} (disabled=${matched.disabled})`);
+    cacheAuthResult(raw, matched.id, matched.disabled === 1);
+    if (matched.disabled) { res.status(403).json({ error: 'Source is disabled' }); return; }
+    (req as Request & { sourceId: number }).sourceId = matched.id;
+    next();
+    return;
+  }
+
+  console.warn(`[agent-auth] No matching source found for token on ${req.method} ${req.path}`);
   res.status(401).json({ error: 'Invalid token' });
 }
 
@@ -304,6 +422,7 @@ router.post('/agent/heartbeat', (req, res, next) => {
   const schema = z.object({ agentVersion: z.string().max(64).optional() });
   const parsed = schema.safeParse(req.body);
   const agentVersion = parsed.success ? (parsed.data.agentVersion ?? null) : null;
+  console.log(`[agent-heartbeat] source=${aReq.sourceId} version=${agentVersion ?? 'unknown'}`);
 
   getDb().prepare(`
     UPDATE backup_sources SET last_seen_at = unixepoch(), agent_version = COALESCE(?, agent_version)
@@ -367,15 +486,51 @@ router.post('/agent/ack', (req, res, next) => {
   res.json({ ok: true });
 });
 
+/** POST /api/sources/agent/backup-progress — agent reports mid-backup progress */
+router.post('/agent/backup-progress', (req, res, next) => {
+  agentAuth(req, res, () => next());
+}, (req, res) => {
+  const aReq = req as AgentReq;
+  const parsed = backupProgressSchema.safeParse(req.body);
+  if (!parsed.success) {
+    console.error(`[agent-progress] source=${aReq.sourceId} PARSE ERROR: ${parsed.error.issues.map(i => i.message).join('; ')}`);
+    console.error(`[agent-progress] source=${aReq.sourceId} raw body: ${JSON.stringify(req.body).slice(0, 500)}`);
+    res.status(400).json({ error: parsed.error.issues[0]?.message }); return;
+  }
+
+  console.log(`[agent-progress] source=${aReq.sourceId} pct=${(parsed.data.percentDone * 100).toFixed(1)}% files=${parsed.data.filesDone}/${parsed.data.totalFiles} currentFile=${(parsed.data.currentFile ?? '').slice(0, 80)}`);
+
+  progressStore.set(aReq.sourceId, {
+    percentDone: parsed.data.percentDone,
+    totalFiles:  parsed.data.totalFiles,
+    filesDone:   parsed.data.filesDone,
+    totalBytes:  parsed.data.totalBytes,
+    bytesDone:   parsed.data.bytesDone,
+    currentFile: parsed.data.currentFile ?? '',
+    updatedAt:   Date.now(),
+  });
+
+  // Keep agent "online" while backup is running (daemon loop is blocked during backup)
+  getDb().prepare('UPDATE backup_sources SET last_seen_at = unixepoch() WHERE id = ?').run(aReq.sourceId);
+
+  res.json({ ok: true });
+});
+
 /** POST /api/sources/agent/backup-result — agent reports backup outcome */
 router.post('/agent/backup-result', (req, res, next) => {
   agentAuth(req, res, () => next());
 }, (req, res) => {
   const aReq   = req as AgentReq;
+  progressStore.delete(aReq.sourceId);
   const parsed = backupResultSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message }); return; }
+  if (!parsed.success) {
+    console.error(`[agent-result] source=${aReq.sourceId} PARSE ERROR: ${parsed.error.issues.map(i => i.message).join('; ')}`);
+    console.error(`[agent-result] source=${aReq.sourceId} raw body: ${JSON.stringify(req.body).slice(0, 500)}`);
+    res.status(400).json({ error: parsed.error.issues[0]?.message }); return;
+  }
 
   const { commandId, status, errorMessage, snapshotId } = parsed.data;
+  console.log(`[agent-result] source=${aReq.sourceId} status=${status} snapshot=${snapshotId?.slice(0, 8) ?? 'none'} error=${errorMessage ?? 'none'}`);
   const db = getDb();
 
   // Update last_backup_at and log the result
@@ -398,6 +553,41 @@ router.post('/agent/backup-result', (req, res, next) => {
       UPDATE agent_commands SET status = 'done', done_at = unixepoch()
       WHERE id = ? AND source_id = ?
     `).run(commandId, aReq.sourceId);
+  }
+
+  // Auto-create repository record for this source if not yet linked,
+  // then trigger indexing so snapshots appear in the UI.
+  if (status === 'success') {
+    const src = db.prepare('SELECT id, name, repo_id FROM backup_sources WHERE id = ?')
+      .get(aReq.sourceId) as { id: number; name: string; repo_id: number | null } | undefined;
+    if (src) {
+      let repoId = src.repo_id;
+      const repoPath = path.join(getSourcesDir(), src.name);
+
+      if (!repoId) {
+        // Check if a repo with this path already exists (UNIQUE constraint on path)
+        const existing = db.prepare('SELECT id FROM repositories WHERE path = ?').get(repoPath) as { id: number } | undefined;
+        if (existing) {
+          repoId = existing.id;
+        } else {
+          const result = db.prepare(`
+            INSERT INTO repositories (name, path, type, password_encrypted, status)
+            VALUES (?, ?, 'local', NULL, 'ok')
+          `).run(`source:${src.name}`, repoPath);
+          repoId = Number(result.lastInsertRowid);
+          console.log(`[sources] Auto-created repo ${repoId} for source "${src.name}"`);
+        }
+        db.prepare('UPDATE backup_sources SET repo_id = ? WHERE id = ?').run(repoId, src.id);
+      }
+
+      // Trigger indexing in background (non-blocking)
+      const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(repoId) as Repository | undefined;
+      if (repo) {
+        indexRepo(repo).catch((err) =>
+          console.error(`[sources] indexRepo ${repoId} failed:`, err instanceof Error ? err.message : err)
+        );
+      }
+    }
   }
 
   // Fire notification on failure
@@ -450,7 +640,11 @@ router.get('/agent/config', (req, res, next) => {
   const aReq = req as AgentReq;
   const db   = getDb();
 
-  const src = db.prepare('SELECT name FROM backup_sources WHERE id = ?').get(aReq.sourceId) as { name: string } | undefined;
+  const src = db.prepare('SELECT name, schedule, keep_last, keep_daily, keep_weekly, keep_monthly, keep_yearly FROM backup_sources WHERE id = ?').get(aReq.sourceId) as {
+    name: string; schedule: string;
+    keep_last: number | null; keep_daily: number | null; keep_weekly: number | null;
+    keep_monthly: number | null; keep_yearly: number | null;
+  } | undefined;
   if (!src) { res.status(404).json({ error: 'Source not found' }); return; }
 
   const rule = db.prepare('SELECT * FROM source_exclusion_rules WHERE source_id = ?').get(aReq.sourceId) as {
@@ -483,6 +677,12 @@ router.get('/agent/config', (req, res, next) => {
     sourceName:     src.name,
     backupPaths,
     excludePatterns,
+    schedule:       src.schedule,
+    keepLast:       src.keep_last,
+    keepDaily:      src.keep_daily,
+    keepWeekly:     src.keep_weekly,
+    keepMonthly:    src.keep_monthly,
+    keepYearly:     src.keep_yearly,
   });
 });
 

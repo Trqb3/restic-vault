@@ -219,7 +219,7 @@ async function fetchAndCacheRepoStats(
 export async function indexRepo(repo: Repository): Promise<void> {
   const db = getDb();
   let password: string | undefined;
-  console.log(`[indexer] indexing repo ${repo.id} "${repo.name}"`);
+  console.log(`[indexer] indexing repo ${repo.id} "${repo.name}" path=${repo.path} type=${repo.type ?? 'unknown'} connection_id=${repo.connection_id ?? 'none'}`);
 
   // Resolve SSH key context for SFTP repos — writes temp key file, returns cleanup fn
   let sshCtx: SshKeyContext | null = null;
@@ -233,8 +233,12 @@ export async function indexRepo(repo: Repository): Promise<void> {
   try {
     if (repo.password_encrypted) {
       password = decrypt(repo.password_encrypted);
+      console.log(`[indexer] repo ${repo.id}: using encrypted password`);
+    } else {
+      console.log(`[indexer] repo ${repo.id}: no password (passwordless repo)`);
     }
 
+    console.log(`[indexer] repo ${repo.id}: calling listSnapshots path=${repo.path} extraArgs=[${extraArgs.join(', ')}]`);
     const snapshots = await listSnapshots(repo.path, password, extraArgs);
     console.log(`[indexer] repo ${repo.id} "${repo.name}": ${snapshots.length} snapshots`);
     const types = classifySnapshots(
@@ -384,6 +388,9 @@ export async function indexRepo(repo: Repository): Promise<void> {
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : '';
+    console.error(`[indexer] repo ${repo.id} "${repo.name}" FAILED: ${msg}`);
+    if (stack) console.error(`[indexer] repo ${repo.id} stack: ${stack.slice(0, 500)}`);
     db.prepare(`
       UPDATE repositories
       SET status = 'error', error_message = ?, last_indexed = unixepoch()

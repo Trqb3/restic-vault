@@ -27,8 +27,13 @@ FROM node:22-slim AS production
 # restic + rest-server (backup-source proxy) + build tools for better-sqlite3
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends restic curl ca-certificates python3 make g++; \
+    apt-get install -y --no-install-recommends curl ca-certificates bzip2 python3 make g++; \
     ARCH="$(dpkg --print-architecture)"; \
+    RESTIC_VER="0.17.3"; \
+    curl -fsSL \
+      "https://github.com/restic/restic/releases/download/v${RESTIC_VER}/restic_${RESTIC_VER}_linux_${ARCH}.bz2" \
+      | bunzip2 > /usr/local/bin/restic; \
+    chmod +x /usr/local/bin/restic; \
     REST_SERVER_VER="0.13.0"; \
     mkdir -p /tmp/rsd; \
     curl -fsSL \

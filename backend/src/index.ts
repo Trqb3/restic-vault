@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import path from 'path';
 import fs from 'fs';
+import http from 'http';
 import bcrypt from 'bcrypt';
 import { getDb } from './db/index.js';
 import { startIndexer, indexAllRepos, backfillSizeHistory } from './services/indexer.js';
@@ -94,12 +95,39 @@ const resticLimiter = rateLimit({
   skip: () => !isRunning(),
 });
 
-app.use(express.json({ limit: '1mb' }));
+// Skip JSON body parsing for /restic — the restic REST protocol sends raw binary
+// data (repo packs). Parsing would consume the stream before the proxy can forward it.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/restic')) return next();
+  express.json({ limit: '1mb' })(req, res, (err) => {
+    if (err) {
+      console.error(`[json-parse] ${req.method} ${req.path} — ${err.message}`);
+      // Log the raw body if available (express stores it on the error for SyntaxError)
+      if (err.type === 'entity.parse.failed' && (err as { body?: string }).body) {
+        console.error(`[json-parse] raw body: ${String((err as { body?: string }).body).slice(0, 500)}`);
+      }
+      res.status(400).json({ error: `Invalid JSON: ${err.message}` });
+      return;
+    }
+    next();
+  });
+});
 app.use(cookieParser());
 
 // Apply login rate limiter before the auth router
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth/2fa/challenge', loginLimiter);
+
+/** Agent progress: 60 requests per minute per token (prevents flood from compromised tokens) */
+const agentProgressLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.headers.authorization ?? req.ip ?? 'unknown',
+  message: { error: 'Progress update rate limit exceeded' },
+});
+app.use('/api/sources/agent/backup-progress', agentProgressLimiter);
 
 // Apply general API rate limiter to all API routes
 app.use('/api', apiLimiter);
@@ -153,22 +181,30 @@ app.use('/restic', resticLimiter, async (req, res) => {
   let sourceId: number | null = null;
   const cached = getCachedAuth(raw);
   if (cached) {
-    if (cached.disabled) { res.status(403).json({ error: 'Source is disabled' }); return; }
+    if (cached.disabled) {
+      console.warn(`[restic-proxy] Source ${cached.sourceId} is disabled (cached)`);
+      res.status(403).json({ error: 'Source is disabled' }); return;
+    }
     sourceId = cached.sourceId;
   } else {
+    console.log(`[restic-proxy] Cache miss, bcrypt lookup for ${req.method} ${req.path}`);
     const db = getDb();
     const sources = db.prepare('SELECT id, token_hash, disabled, name FROM backup_sources').all() as (BackupSource & { name: string })[];
+    let matched: (typeof sources)[number] | null = null;
     for (const src of sources) {
-      if (await verifyToken(raw, src.token_hash)) {
-        cacheAuthResult(raw, src.id, src.disabled === 1);
-        if (src.disabled) { res.status(403).json({ error: 'Source is disabled' }); return; }
-        sourceId = src.id;
-        break;
-      }
+      const isMatch = await verifyToken(raw, src.token_hash);
+      if (isMatch && !matched) matched = src;
+    }
+    if (matched) {
+      console.log(`[restic-proxy] Matched source ${matched.id} "${matched.name}"`);
+      cacheAuthResult(raw, matched.id, matched.disabled === 1);
+      if (matched.disabled) { res.status(403).json({ error: 'Source is disabled' }); return; }
+      sourceId = matched.id;
     }
   }
 
   if (!sourceId) {
+    console.warn(`[restic-proxy] No matching source for ${req.method} ${req.path}`);
     res.status(401).json({ error: 'Invalid token' });
     return;
   }
@@ -193,45 +229,42 @@ app.use('/restic', resticLimiter, async (req, res) => {
     return;
   }
 
-  // Forward to rest-server
-  const upstream = `http://127.0.0.1:${REST_SERVER_PORT}${urlPath}${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`;
+  // Forward to rest-server via http.request + pipe (reliable for binary streams)
+  const upstreamPath = `${urlPath}${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`;
+  console.log(`[restic-proxy] ${req.method} ${upstreamPath} → source=${sourceId} (${sourceName})`);
 
-  try {
-    const headers: Record<string, string> = {};
-    for (const [k, v] of Object.entries(req.headers)) {
-      if (k === 'authorization' || k === 'host') continue;
-      if (typeof v === 'string') headers[k] = v;
-    }
-
-    const fetchRes = await fetch(upstream, {
-      method: req.method,
-      headers,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      body: ['GET', 'HEAD', 'DELETE'].includes(req.method) ? undefined : (req as any),
-      duplex: 'half',
-    } as RequestInit & { duplex: string });
-
-    res.status(fetchRes.status);
-    fetchRes.headers.forEach((v, k) => {
-      if (k !== 'transfer-encoding') res.setHeader(k, v);
-    });
-
-    if (fetchRes.body) {
-      const reader = fetchRes.body.getReader();
-      const pump = async (): Promise<void> => {
-        const { done, value } = await reader.read();
-        if (done) { res.end(); return; }
-        res.write(value);
-        return pump();
-      };
-      await pump();
-    } else {
-      res.end();
-    }
-  } catch (err) {
-    console.error('[restic-proxy] Forward error:', err);
-    res.status(502).json({ error: 'Failed to reach backup source server' });
+  const fwdHeaders: Record<string, string> = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (k === 'authorization' || k === 'host') continue;
+    if (typeof v === 'string') fwdHeaders[k] = v;
   }
+
+  const proxyReq = http.request(
+    {
+      hostname: '127.0.0.1',
+      port: REST_SERVER_PORT,
+      path: upstreamPath,
+      method: req.method,
+      headers: fwdHeaders,
+    },
+    (proxyRes) => {
+      res.status(proxyRes.statusCode ?? 502);
+      for (const [k, v] of Object.entries(proxyRes.headers)) {
+        if (k === 'transfer-encoding' || !v) continue;
+        res.setHeader(k, v);
+      }
+      proxyRes.pipe(res);
+    },
+  );
+
+  proxyReq.on('error', (err) => {
+    console.error('[restic-proxy] Forward error:', err);
+    if (!res.headersSent) {
+      res.status(502).json({ error: 'Failed to reach backup source server' });
+    }
+  });
+
+  req.pipe(proxyReq);
 });
 
 // Serve agent install script from backend/public/
