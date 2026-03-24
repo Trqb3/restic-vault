@@ -179,19 +179,56 @@ run_backup() {
   ERROR_MSG=""
   STATUS="failure"
 
-  RESTIC_PASSWORD="" \
-    "$RESTIC_BIN" \
-      -r "$RESTIC_REPO" \
-      --insecure-no-password \
-      --no-lock \
-      backup \
-        --json \
-        $EXCLUDE_ARGS \
-        $BACKUP_PATHS_ARG \
-      >> "$LOG_FILE" 2>&1 && STATUS="success" || ERROR_MSG="restic exited with code $?"
+  # Pipe restic stdout through a parser to extract progress and report it
+  LAST_PROGRESS_TIME=0
+  _EXIT_FILE="$(mktemp)"
+  while IFS= read -r line; do
+    echo "$line" >> "$LOG_FILE"
+
+    MSG_TYPE="$(echo "$line" | grep -o '"message_type":"[^"]*"' | cut -d'"' -f4 || echo "")"
+
+    if [[ "$MSG_TYPE" == "status" ]]; then
+      NOW="$(date +%s)"
+      if (( NOW - LAST_PROGRESS_TIME >= 5 )); then
+        LAST_PROGRESS_TIME="$NOW"
+        PCT="$(echo "$line"     | grep -o '"percent_done":[0-9.e-]*'  | cut -d: -f2 || echo "0")"
+        T_FILES="$(echo "$line" | grep -o '"total_files":[0-9]*'      | cut -d: -f2 || echo "0")"
+        F_DONE="$(echo "$line"  | grep -o '"files_done":[0-9]*'       | cut -d: -f2 || echo "0")"
+        T_BYTES="$(echo "$line" | grep -o '"total_bytes":[0-9]*'      | cut -d: -f2 || echo "0")"
+        B_DONE="$(echo "$line"  | grep -o '"bytes_done":[0-9]*'       | cut -d: -f2 || echo "0")"
+        C_FILE="$(echo "$line"  | grep -o '"current_files":\["[^"]*"' | sed 's/.*\["//;s/"$//' || echo "")"
+        # Escape backslashes and double-quotes in filename for safe JSON embedding
+        C_FILE="$(echo "$C_FILE" | sed 's/\\/\\\\/g;s/"/\\"/g')"
+
+        PROGRESS_DATA=$(printf '{"percentDone":%s,"totalFiles":%s,"filesDone":%s,"totalBytes":%s,"bytesDone":%s,"currentFile":"%s"}' \
+          "${PCT:-0}" "${T_FILES:-0}" "${F_DONE:-0}" "${T_BYTES:-0}" "${B_DONE:-0}" "${C_FILE}")
+        rv_post backup-progress "$PROGRESS_DATA" > /dev/null 2>&1 &
+      fi
+    fi
+
+    if [[ "$MSG_TYPE" == "summary" ]]; then
+      SNAPSHOT_ID="$(echo "$line" | grep -o '"snapshot_id":"[^"]*"' | cut -d'"' -f4 || echo "")"
+    fi
+  done < <("$RESTIC_BIN" \
+    -r "$RESTIC_REPO" \
+    --insecure-no-password \
+    --no-lock \
+    backup \
+      --json \
+      $EXCLUDE_ARGS \
+      $BACKUP_PATHS_ARG \
+    2>> "$LOG_FILE"; echo $? > "$_EXIT_FILE")
+
+  RESTIC_EXIT="$(cat "$_EXIT_FILE" 2>/dev/null || echo "1")"
+  rm -f "$_EXIT_FILE"
+
+  if [[ "$RESTIC_EXIT" -eq 0 ]]; then
+    STATUS="success"
+  else
+    ERROR_MSG="restic exited with code $RESTIC_EXIT"
+  fi
 
   if [[ "$STATUS" == "success" ]]; then
-    SNAPSHOT_ID="$(grep -o '"snapshot_id":"[^"]*"' "$LOG_FILE" | tail -1 | cut -d'"' -f4 || echo "")"
     log "Backup succeeded. Snapshot: $SNAPSHOT_ID"
 
     # ── Retention: forget + prune based on server config ──────────────────────
@@ -210,13 +247,12 @@ run_backup() {
 
     if [[ -n "$FORGET_ARGS" ]]; then
       log "Running forget/prune:$FORGET_ARGS"
-      RESTIC_PASSWORD="" \
-        "$RESTIC_BIN" \
-          -r "$RESTIC_REPO" \
-          --insecure-no-password \
-          forget --prune \
-          $FORGET_ARGS \
-        >> "$LOG_FILE" 2>&1 || log "Warning: forget/prune failed (non-fatal)"
+      "$RESTIC_BIN" \
+        -r "$RESTIC_REPO" \
+        --insecure-no-password \
+        forget --prune \
+        $FORGET_ARGS \
+      >> "$LOG_FILE" 2>&1 || log "Warning: forget/prune failed (non-fatal)"
     fi
   else
     log "Backup failed: $ERROR_MSG"
@@ -276,11 +312,10 @@ run_discover() {
 # ── Initialize repo ──────────────────────────────────────────────────────────
 init_repo() {
   log "Initializing restic repository at $RESTIC_REPO ..."
-  RESTIC_PASSWORD="" \
-    "$RESTIC_BIN" \
-      -r "$RESTIC_REPO" \
-      --insecure-no-password \
-      init 2>&1 | tee -a "$LOG_FILE" || true
+  "$RESTIC_BIN" \
+    -r "$RESTIC_REPO" \
+    --insecure-no-password \
+    init 2>&1 | tee -a "$LOG_FILE" || true
 }
 
 # ── Sync schedule: update systemd timer if server schedule changed ────────────
@@ -312,7 +347,7 @@ sync_schedule() {
 run_daemon() {
   log "Agent starting. Connecting to ${RV_SERVER} as '${RV_NAME}' ..."
 
-  AGENT_VERSION="1.0.0"
+  AGENT_VERSION="1.1.5"
   local hb
   hb=$(printf '{"agentVersion":"%s"}' "$AGENT_VERSION")
   rv_post heartbeat "$hb"
