@@ -156,10 +156,10 @@
       <button
               onclick={() => showSettingsModal = true}
               title="Settings"
-              class="p-2 text-gray-500 hover:text-white hover:bg-gray-800 border border-transparent
+              class="p-2.5 text-gray-500 hover:text-white hover:bg-gray-800 border border-transparent
              hover:border-gray-700 rounded-lg transition-all duration-150"
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
@@ -173,26 +173,24 @@
               onclick={scanRepos}
               disabled={scanning}
               class="flex items-center gap-1.5 text-sm text-gray-400 hover:text-white bg-gray-900
-             hover:bg-gray-800 disabled:opacity-40 px-3 py-2 rounded-lg transition-all duration-150
+             hover:bg-gray-800 disabled:opacity-40 p-2.5 rounded-lg transition-all duration-150
              border border-gray-800 hover:border-gray-700"
       >
-        <svg class="w-3.5 h-3.5 {scanning ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="size-4 {scanning ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
         </svg>
-        {scanning ? 'Scanning…' : 'Scan'}
       </button>
 
       <!-- Add -->
       <button
               onclick={() => showAddModal = true}
               class="flex items-center gap-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500
-             active:scale-95 px-3.5 py-2 rounded-lg transition-all duration-150"
+             active:scale-95 p-2.5 rounded-lg transition-all duration-150"
       >
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
         </svg>
-        Hinzufügen
       </button>
     </div>
   </div>
@@ -410,28 +408,30 @@
     </form>
   {/snippet}
   {#snippet footer()}
-    <button
-            onclick={() => showAddModal = false}
-            class="px-4 py-2 text-sm text-gray-400 hover:text-white bg-transparent hover:bg-gray-800
-             rounded-lg transition-colors border border-gray-700"
-    >
-      Abbrechen
-    </button>
-    <button
-            form="add-form" type="submit" disabled={addLoading}
-            class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600
-             hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors"
-    >
-      {#if addLoading}
-        <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-        Hinzufügen…
-      {:else}
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-        </svg>
-        Repository hinzufügen
-      {/if}
-    </button>
+    <div class="flex justify-between items-center">
+      <button
+              onclick={() => showAddModal = false}
+              class="px-4 py-2 text-sm text-gray-400 hover:text-white bg-transparent hover:bg-gray-800
+       rounded-lg transition-colors border border-gray-700"
+      >
+        Abbrechen
+      </button>
+      <button
+              form="add-form" type="submit" disabled={addLoading}
+              class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600
+       hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors"
+      >
+        {#if addLoading}
+          <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+          Hinzufügen…
+        {:else}
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+          Repository hinzufügen
+        {/if}
+      </button>
+    </div>
   {/snippet}
 </Modal>
 
@@ -439,7 +439,6 @@
 <Modal open={showSettingsModal} title="Settings" onclose={() => showSettingsModal = false}>
   {#snippet children()}
     <div class="space-y-4">
-
       <div class="bg-gray-800/50 border border-gray-700/50 rounded-lg p-3 flex items-start gap-2.5">
         <svg class="w-4 h-4 text-blue-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
@@ -470,27 +469,29 @@
     </div>
   {/snippet}
   {#snippet footer()}
-    <button
-            onclick={() => showSettingsModal = false}
-            class="px-4 py-2 text-sm text-gray-400 hover:text-white bg-transparent hover:bg-gray-800
-             rounded-lg transition-colors border border-gray-700"
-    >
-      Abbrechen
-    </button>
-    <button
-            onclick={saveSettings} disabled={settingsLoading}
-            class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600
-             hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors"
-    >
-      {#if settingsLoading}
-        <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-        Speichern…
-      {:else}
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-        </svg>
-        Speichern
-      {/if}
-    </button>
+    <div class="flex justify-between items-center">
+      <button
+              onclick={() => showSettingsModal = false}
+              class="px-4 py-2 text-sm text-gray-400 hover:text-white bg-transparent hover:bg-gray-800
+               rounded-lg transition-colors border border-gray-700"
+      >
+        Abbrechen
+      </button>
+      <button
+              onclick={saveSettings} disabled={settingsLoading}
+              class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600
+               hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors"
+      >
+        {#if settingsLoading}
+          <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+          Speichern…
+        {:else}
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          </svg>
+          Speichern
+        {/if}
+      </button>
+    </div>
   {/snippet}
 </Modal>

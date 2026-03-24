@@ -665,7 +665,7 @@
     <p class="text-xs text-gray-500">Admin role required to view this page.</p>
   </div>
 {:else}
-  <div class="max-w-4xl mx-auto space-y-6">
+  <div class="max-w-4xl mx-auto space-y-6 w-fit">
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-xl font-semibold text-white">Admin Panel</h1>
@@ -694,12 +694,11 @@
         <div class="flex justify-end">
           <button
                   onclick={() => showAddModal = true}
-                  class="flex items-center gap-2 text-sm bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2 rounded-lg transition-colors"
+                  class="flex items-center gap-2 text-sm bg-blue-600 hover:bg-blue-500 text-white p-2.5 rounded-lg transition-colors"
           >
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
             </svg>
-            Add User
           </button>
         </div>
 
@@ -738,41 +737,70 @@
                   {user.role === 'admin' ? '∞ All' : user.repo_count}
                 </td>
                 <td class="px-5 py-3.5">
+
                   {#if user.totp_enabled}
-                    <span class="inline-flex items-center gap-1 text-xs font-medium text-green-400 bg-green-500/10 ring-1 ring-green-500/20 px-2 py-0.5 rounded-md">
-                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <span class="inline-flex items-center justify-center w-6 h-6 text-green-400 bg-green-500/10 ring-1 ring-green-500/20 rounded-md">
+                      <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
                       </svg>
-                      Aktiv
                     </span>
                   {:else}
-                    <span class="text-gray-600 text-sm">—</span>
+                    <span class="inline-flex items-center justify-center w-6 h-6 text-red-400 bg-red-500/10 ring-1 ring-red-500/20 rounded-md">
+                      <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                      </svg>
+                    </span>
                   {/if}
                 </td>
                 <td class="px-5 py-3.5 text-gray-500 text-xs">{formatDate(user.created_at)}</td>
                 <td class="px-5 py-3.5">
                   <div class="flex items-center justify-end gap-1">
+                    <!-- Passwort Reset -->
                     <button
                             onclick={() => openResetModal(user)}
-                            class="text-xs text-gray-400 hover:text-white transition-colors px-2.5 py-1.5 rounded-lg hover:bg-gray-800"
+                            class="text-xs text-gray-400 hover:text-white transition-colors p-2.5 rounded-lg hover:bg-gray-800 aspect-square flex items-center justify-center relative"
+                            title="Password zurücksetzen"
                     >
-                      Reset PW
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+                      </svg>
+                      <div class="absolute bottom-1 right-1 bg-blue-600 rounded-full size-3.5 flex items-center justify-center pointer-events-none">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="size-2.5 text-white">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
+                        </svg>
+                      </div>
                     </button>
+
+                    <!-- 2FA Reset -->
                     {#if user.totp_enabled}
                       <button
                               onclick={() => reset2fa(user.id, user.username)}
-                              class="text-xs text-amber-400 hover:text-amber-300 transition-colors px-2.5 py-1.5 rounded-lg hover:bg-amber-500/10"
+                              class="text-xs text-amber-400 hover:text-amber-300 transition-colors p-2.5 rounded-lg hover:bg-amber-500/10 relative inline-flex items-center gap-1.5 aspect-square"
                               title="2FA zurücksetzen"
                       >
-                        2FA Reset
+                        <div class="relative inline-flex items-center justify-center">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 13.5h3" />
+                          </svg>
+                          <div class="absolute -bottom-1 -right-1 bg-amber-500 rounded-full size-3.5 flex items-center justify-center pointer-events-none">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="size-2.5 text-white">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
+                            </svg>
+                          </div>
+                        </div>
                       </button>
                     {/if}
+
+                    <!-- Benutzer löschen -->
                     <button
                             onclick={() => deleteUser(user.id)}
                             disabled={deletingId === user.id}
-                            class="text-xs text-red-400 hover:text-red-300 transition-colors px-2.5 py-1.5 rounded-lg hover:bg-red-500/10 disabled:opacity-40"
+                            class="text-xs text-red-400 hover:text-red-300 transition-colors p-2.5 rounded-lg hover:bg-red-500/10 disabled:opacity-40"
+                            title="Benutzer löschen"
                     >
-                      Delete
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                      </svg>
                     </button>
                   </div>
                 </td>
@@ -1519,11 +1547,13 @@
 {/if}
 
 <!-- Add User Modal -->
-<Modal open={showAddModal} title="Add User" onclose={() => showAddModal = false}>
+<Modal open={showAddModal} title="Benutzer hinzufügen" onclose={() => showAddModal = false}>
   {#snippet children()}
     <div class="space-y-4">
       <div>
-        <label for="new-username" class="block text-xs font-medium text-gray-400 mb-1.5">Username</label>
+        <label for="new-username" class="block text-xs font-medium text-gray-400 mb-1.5">
+          Benutzername
+        </label>
         <input
                 id="new-username"
                 type="text"
@@ -1534,7 +1564,9 @@
         />
       </div>
       <div>
-        <label for="new-password" class="block text-xs font-medium text-gray-400 mb-1.5">Password</label>
+        <label for="new-password" class="block text-xs font-medium text-gray-400 mb-1.5">
+          Passwort
+        </label>
         <input
                 id="new-password"
                 type="password"
@@ -1544,7 +1576,9 @@
         />
       </div>
       <div>
-        <label for="new-role" class="block text-xs font-medium text-gray-400 mb-1.5">Role</label>
+        <label for="new-role" class="block text-xs font-medium text-gray-400 mb-1.5">
+          Rolle
+        </label>
         <select
                 id="new-role"
                 bind:value={newRole}
@@ -1563,7 +1597,7 @@
             class="px-4 py-2 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-800
              rounded-lg transition-colors border border-gray-700"
     >
-      Cancel
+      Abbrechen
     </button>
     <button
             onclick={addUser}
@@ -1571,7 +1605,7 @@
             class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500
              disabled:opacity-40 rounded-lg transition-colors"
     >
-      {addingUser ? 'Creating…' : 'Create User'}
+      {addingUser ? 'Erstelle…' : 'Erstellen'}
     </button>
   {/snippet}
 </Modal>
@@ -1579,7 +1613,7 @@
 <ConfirmModal />
 
 <!-- Add SSH Connection Modal -->
-<Modal open={showAddSshModal} title="Add SSH Connection" onclose={() => showAddSshModal = false}>
+<Modal open={showAddSshModal} title="SSH Verbindung hinzufügen" onclose={() => showAddSshModal = false}>
   {#snippet children()}
     <div class="space-y-4">
       <div class="grid grid-cols-2 gap-3">
@@ -1637,7 +1671,7 @@
       class="px-4 py-2 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-800
              rounded-lg transition-colors border border-gray-700"
     >
-      Cancel
+      Abbrechen
     </button>
     <button
       onclick={addSshConnection}
@@ -1645,19 +1679,19 @@
       class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500
              disabled:opacity-40 rounded-lg transition-colors"
     >
-      {addingSsh ? 'Saving…' : 'Save Connection'}
+      {addingSsh ? 'Speichern…' : 'Speichern'}
     </button>
   {/snippet}
 </Modal>
 
 <!-- Reset Password Modal -->
-<Modal open={showResetModal} title="Reset Password" onclose={() => showResetModal = false}>
+<Modal open={showResetModal} title="Passwort zurücksetzen" onclose={() => showResetModal = false}>
   {#snippet children()}
     <p class="text-gray-400 text-sm mb-4">
-      New password for <span class="text-white font-medium">{resetTargetName}</span>
+      Neues Passwort für <span class="text-white font-medium">{resetTargetName}</span>
     </p>
     <div>
-      <label for="reset-password" class="block text-xs font-medium text-gray-400 mb-1.5">New Password</label>
+      <label for="reset-password" class="block text-xs font-medium text-gray-400 mb-1.5">Neues Passwort</label>
       <input
               id="reset-password"
               type="password"
@@ -1669,19 +1703,19 @@
   {/snippet}
   {#snippet footer()}
     <button
-            onclick={() => showResetModal = false}
-            class="px-4 py-2 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-800
+          onclick={() => showResetModal = false}
+          class="px-4 py-2 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-800
              rounded-lg transition-colors border border-gray-700"
-    >
-      Cancel
-    </button>
+  >
+    Abbrechen
+  </button>
     <button
             onclick={resetPwd}
             disabled={resettingPassword || !resetPassword}
             class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500
              disabled:opacity-40 rounded-lg transition-colors"
     >
-      {resettingPassword ? 'Resetting…' : 'Reset Password'}
+      {resettingPassword ? 'Setze zurück…' : 'Zurücksetzen'}
     </button>
   {/snippet}
 </Modal>
@@ -1810,12 +1844,16 @@
     <button
       onclick={() => showAddProviderModal = false}
       class="px-4 py-2 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-800 rounded-lg transition-colors border border-gray-700"
-    >Abbrechen</button>
+    >
+      Abbrechen
+    </button>
     <button
       onclick={addProvider}
       disabled={addingProvider || !newProviderName || !npFromAddress}
       class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-lg transition-colors"
-    >{addingProvider ? 'Speichern…' : 'Anbieter speichern'}</button>
+    >
+      {addingProvider ? 'Speichern…' : 'Speichern'}
+    </button>
   {/snippet}
 </Modal>
 
@@ -1934,7 +1972,7 @@
 </Modal>
 
 <!-- Add / Edit Exclusion Profile Modal -->
-<Modal open={showAddProfileModal} title={editingProfile ? 'Edit Profile' : 'New Exclusion Profile'}
+<Modal open={showAddProfileModal} title={editingProfile ? 'Ausschluss Profil bearbeiten' : 'Neues Ausschluss Profil'}
        onclose={() => { showAddProfileModal = false; editingProfile = null; }}>
   {#snippet children()}
     <div class="space-y-4">
@@ -1953,7 +1991,7 @@
         <input
           id="ep-desc"
           bind:value={epDescription}
-          placeholder="Optional description"
+          placeholder="Optionale Beschreibung"
           class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm
                  focus:outline-none focus:border-emerald-500 transition-colors"
         />
@@ -1979,12 +2017,14 @@
       onclick={() => { showAddProfileModal = false; editingProfile = null; }}
       class="px-4 py-2 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-800
              rounded-lg transition-colors border border-gray-700"
-    >Cancel</button>
+    >
+      Abbrechen
+    </button>
     <button
       onclick={editingProfile ? saveEditedProfile : addExclusionProfile}
       disabled={addingProfile || !epName.trim()}
       class="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500
              disabled:opacity-40 rounded-lg transition-colors"
-    >{addingProfile ? 'Saving…' : (editingProfile ? 'Save Changes' : 'Create Profile')}</button>
+    >{addingProfile ? 'Speichern…' : (editingProfile ? 'Speichern' : 'Erstellen')}</button>
   {/snippet}
 </Modal>

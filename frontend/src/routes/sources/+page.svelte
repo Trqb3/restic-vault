@@ -222,19 +222,32 @@
             {#if role === 'admin'}
               <button
                 onclick={() => toggleDisabled(src)}
-                class="text-xs py-1.5 px-3 rounded-lg transition-colors
+                class="text-xs p-2.5 rounded-lg transition-colors
                        {src.disabled
                          ? 'text-emerald-400 hover:bg-emerald-500/10'
                          : 'text-yellow-400 hover:bg-yellow-500/10'}"
               >
-                {src.disabled ? 'Enable' : 'Disable'}
+                {#if src.disabled}
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.91 11.672a.375.375 0 0 1 0 .656l-5.603 3.113a.375.375 0 0 1-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112Z" />
+                  </svg>
+                {:else}
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 9.563C9 9.252 9.252 9 9.563 9h4.874c.311 0 .563.252.563.563v4.874c0 .311-.252.563-.563.563H9.564A.562.562 0 0 1 9 14.437V9.564Z" />
+                  </svg>
+                {/if}
               </button>
               <button
                 onclick={() => deleteSource(src)}
-                class="text-xs text-red-400 hover:text-red-300 py-1.5 px-3 rounded-lg
+                class="text-xs text-red-400 hover:text-red-300 p-2.5 rounded-lg
                        hover:bg-red-500/10 transition-colors"
               >
-                Delete
+                <svg class="size-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
               </button>
             {/if}
           </div>
