@@ -10,7 +10,7 @@
     "dev": "concurrently --kill-others --raw \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
     "start": "npm run start --workspace=backend",
-    "check": "npm --prefix ./frontend run check"
+    "check": "cd frontend && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
