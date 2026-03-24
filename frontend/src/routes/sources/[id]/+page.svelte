@@ -3,11 +3,14 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import {
-    backupSources, exclusionProfiles,
+    backupSources, exclusionProfiles, auth,
     type BackupSource, type BackupSourceLog, type AgentCommand,
     type SourceExclusionRule, type AgentDiscoveredPath, type ExclusionProfile,
+    type BackupProgress,
   } from '$lib/api';
   import { toast } from '$lib/toast';
+
+  let role = $state<'admin' | 'viewer' | ''>('');
 
   type Tab = 'overview' | 'install' | 'config' | 'logs' | 'paths' | 'commands';
 
@@ -28,7 +31,17 @@
   let cfgProfileId     = $state<number | ''>('');
   let cfgCustomPats    = $state('');
   let cfgBackupPaths   = $state('');
+  let cfgSchedule      = $state('0 2 * * *');
+  let cfgKeepLast      = $state<string>('');
+  let cfgKeepDaily     = $state<string>('7');
+  let cfgKeepWeekly    = $state<string>('4');
+  let cfgKeepMonthly   = $state<string>('6');
+  let cfgKeepYearly    = $state<string>('1');
   let cfgSaving        = $state(false);
+
+  // Backup progress
+  let progress      = $state<BackupProgress | null>(null);
+  let progressTimer = $state<ReturnType<typeof setInterval> | null>(null);
 
   // Remote actions
   let sendingCmd = $state<string | null>(null);
@@ -58,6 +71,12 @@
       cfgProfileId   = rl?.profile_id ?? '';
       cfgCustomPats  = rl?.custom_patterns ? JSON.parse(rl.custom_patterns).join('\n') : '';
       cfgBackupPaths = rl?.backup_paths    ? JSON.parse(rl.backup_paths).join('\n')    : '';
+      cfgSchedule    = src.schedule ?? '0 2 * * *';
+      cfgKeepLast    = src.keep_last    != null ? String(src.keep_last)    : '';
+      cfgKeepDaily   = src.keep_daily   != null ? String(src.keep_daily)   : '';
+      cfgKeepWeekly  = src.keep_weekly  != null ? String(src.keep_weekly)  : '';
+      cfgKeepMonthly = src.keep_monthly != null ? String(src.keep_monthly) : '';
+      cfgKeepYearly  = src.keep_yearly  != null ? String(src.keep_yearly)  : '';
     } catch (e) {
       toast.error((e as Error).message);
       goto('/sources');
@@ -66,16 +85,64 @@
     }
   }
 
-  onMount(load);
+  async function pollProgress() {
+    try {
+      const p = await backupSources.getProgress(sourceId);
+      const wasActive = progress?.active;
+      progress = p.active ? p : null;
+      // Backup just finished — refresh all data
+      if (wasActive && !p.active) await load();
+    } catch { /* best-effort */ }
+  }
+
+  onMount(() => {
+    load();
+    auth.me().then(me => role = me.role).catch(() => {});
+    pollProgress();
+    progressTimer = setInterval(pollProgress, 3000);
+    const dataTimer = setInterval(() => {
+      // Silent data refresh — don't show loading spinner if already loaded
+      if (source) {
+        Promise.all([
+          backupSources.get(sourceId),
+          backupSources.getLogs(sourceId),
+          backupSources.getCommands(sourceId),
+          backupSources.getPaths(sourceId),
+        ]).then(([src, lg, cmds, ps]) => {
+          source = src; logs = lg; commands = cmds; paths = ps;
+        }).catch(() => {});
+      }
+    }, 30_000);
+    return () => {
+      if (progressTimer) clearInterval(progressTimer);
+      clearInterval(dataTimer);
+    };
+  });
+
+  function parseKeep(v: string | number): number | null {
+    if (v === '' || v === null || v === undefined) return null;
+    const n = typeof v === 'number' ? v : parseInt(String(v).trim(), 10);
+    return isNaN(n) ? null : n;
+  }
 
   async function saveConfig() {
     cfgSaving = true;
     try {
-      await backupSources.setExclusionRule(sourceId, {
-        profileId:      cfgProfileId !== '' ? Number(cfgProfileId) : null,
-        customPatterns: cfgCustomPats.split('\n').map(s => s.trim()).filter(Boolean),
-        backupPaths:    cfgBackupPaths.split('\n').map(s => s.trim()).filter(Boolean),
-      });
+      await Promise.all([
+        backupSources.setExclusionRule(sourceId, {
+          profileId:      cfgProfileId !== '' ? Number(cfgProfileId) : null,
+          customPatterns: cfgCustomPats.split('\n').map(s => s.trim()).filter(Boolean),
+          backupPaths:    cfgBackupPaths.split('\n').map(s => s.trim()).filter(Boolean),
+        }),
+        backupSources.update(sourceId, {
+          schedule:    cfgSchedule,
+          keepLast:    parseKeep(cfgKeepLast),
+          keepDaily:   parseKeep(cfgKeepDaily),
+          keepWeekly:  parseKeep(cfgKeepWeekly),
+          keepMonthly: parseKeep(cfgKeepMonthly),
+          keepYearly:  parseKeep(cfgKeepYearly),
+        }),
+      ]);
       toast.success('Configuration saved');
       await load();
     } catch (e) {
@@ -90,6 +157,7 @@
     try {
       await backupSources.sendCommand(sourceId, cmd);
       toast.success(`Command "${cmd}" sent to agent`);
+      if (cmd === 'backup') pollProgress();
       await load();
     } catch (e) {
       toast.error((e as Error).message);
@@ -150,14 +218,15 @@
     return `curl -fsSL ${srv}/agent-install.sh | sudo bash -s -- \\\n  --server ${srv} \\\n  --token  ${tok} \\\n  --name   ${name}`;
   }
 
-  const tabs: { id: Tab; label: string }[] = [
+  const allTabs: { id: Tab; label: string; adminOnly?: boolean }[] = [
     { id: 'overview', label: 'Overview'      },
-    { id: 'install',  label: 'Install'       },
-    { id: 'config',   label: 'Configuration' },
+    { id: 'install',  label: 'Install',       adminOnly: true },
+    { id: 'config',   label: 'Configuration', adminOnly: true },
     { id: 'logs',     label: 'Logs'          },
     { id: 'paths',    label: 'Paths'         },
     { id: 'commands', label: 'Remote Actions'},
   ];
+  let tabs = $derived(role === 'admin' ? allTabs : allTabs.filter(t => !t.adminOnly));
 </script>
 
 {#if loading}
@@ -226,6 +295,42 @@
       </div>
     </div>
 
+    <!-- Backup progress -->
+    {#if progress}
+      <div class="bg-gray-900/60 border border-emerald-500/20 rounded-2xl p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
+            <span class="text-sm font-medium text-emerald-400">Backup in progress</span>
+          </div>
+          <span class="text-sm text-white font-mono">
+            {progress.totalFiles
+              ? `${Math.round((progress.percentDone ?? 0) * 100)}%`
+              : 'Scanning…'}
+          </span>
+        </div>
+
+        <div class="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
+          <div
+            class="h-full bg-emerald-500 rounded-full transition-all duration-500"
+            style="width: {(progress.percentDone ?? 0) * 100}%"
+          ></div>
+        </div>
+
+        <div class="flex gap-6 text-xs text-gray-400">
+          {#if progress.totalFiles}
+            <span>{(progress.filesDone ?? 0).toLocaleString()} / {(progress.totalFiles ?? 0).toLocaleString()} files</span>
+          {/if}
+          {#if progress.totalBytes}
+            <span>{formatBytes(progress.bytesDone ?? 0)} / {formatBytes(progress.totalBytes ?? 0)}</span>
+          {/if}
+          {#if progress.currentFile}
+            <span class="truncate text-gray-600" title={progress.currentFile}>{progress.currentFile}</span>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
     <!-- Tabs -->
     <div class="border-b border-gray-800/60">
       <nav class="flex gap-1 overflow-x-auto">
@@ -254,7 +359,8 @@
       <!-- ── Overview ──────────────────────────────────────────────────────── -->
       {#if activeTab === 'overview'}
         <div class="space-y-4">
-          <!-- Token management -->
+          <!-- Token management (admin only) -->
+          {#if role === 'admin'}
           <div class="bg-gray-900/60 border border-gray-800/60 rounded-2xl p-6 space-y-4">
             <h3 class="text-sm font-semibold text-white">Token Management</h3>
             {#if newToken}
@@ -291,6 +397,7 @@
               </button>
             {/if}
           </div>
+          {/if}
 
           <!-- Recent log entries -->
           {#if logs.length > 0}
@@ -363,6 +470,72 @@
 
       <!-- ── Configuration ─────────────────────────────────────────────────── -->
       {:else if activeTab === 'config'}
+        <!-- Backup Schedule -->
+        <div class="bg-gray-900/60 border border-gray-800/60 rounded-2xl p-6 space-y-4 mb-5">
+          <h3 class="text-sm font-semibold text-white">Backup Schedule</h3>
+          <div class="space-y-1">
+            <label class="block text-xs font-medium text-gray-400" for="cfg-schedule">
+              Cron Expression
+            </label>
+            <p class="text-xs text-gray-600">Standard 5-field cron (minute hour day month weekday). Default: <code class="text-gray-500">0 2 * * *</code> = daily at 02:00.</p>
+            <input
+              id="cfg-schedule"
+              type="text"
+              bind:value={cfgSchedule}
+              placeholder="0 2 * * *"
+              class="w-full bg-gray-800/60 border border-gray-700/60 rounded-xl px-3 py-2.5
+                     text-sm text-white placeholder-gray-600 font-mono focus:outline-none
+                     focus:border-emerald-500/60"
+            />
+          </div>
+        </div>
+
+        <!-- Retention Policy -->
+        <div class="bg-gray-900/60 border border-gray-800/60 rounded-2xl p-6 space-y-4 mb-5">
+          <h3 class="text-sm font-semibold text-white">Retention Policy</h3>
+          <p class="text-xs text-gray-600">
+            Configure how many snapshots to keep. Leave empty to disable a rule. After each backup the agent runs <code class="text-gray-500">restic forget --prune</code> with these values.
+          </p>
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-4">
+            <div class="space-y-1">
+              <label class="block text-xs font-medium text-gray-400" for="cfg-keep-last">Keep last</label>
+              <input id="cfg-keep-last" type="number" min="0" max="9999" bind:value={cfgKeepLast} placeholder="—"
+                class="w-full bg-gray-800/60 border border-gray-700/60 rounded-xl px-3 py-2.5
+                       text-sm text-white placeholder-gray-600 font-mono focus:outline-none
+                       focus:border-emerald-500/60" />
+            </div>
+            <div class="space-y-1">
+              <label class="block text-xs font-medium text-gray-400" for="cfg-keep-daily">Daily</label>
+              <input id="cfg-keep-daily" type="number" min="0" max="9999" bind:value={cfgKeepDaily} placeholder="—"
+                class="w-full bg-gray-800/60 border border-gray-700/60 rounded-xl px-3 py-2.5
+                       text-sm text-white placeholder-gray-600 font-mono focus:outline-none
+                       focus:border-emerald-500/60" />
+            </div>
+            <div class="space-y-1">
+              <label class="block text-xs font-medium text-gray-400" for="cfg-keep-weekly">Weekly</label>
+              <input id="cfg-keep-weekly" type="number" min="0" max="9999" bind:value={cfgKeepWeekly} placeholder="—"
+                class="w-full bg-gray-800/60 border border-gray-700/60 rounded-xl px-3 py-2.5
+                       text-sm text-white placeholder-gray-600 font-mono focus:outline-none
+                       focus:border-emerald-500/60" />
+            </div>
+            <div class="space-y-1">
+              <label class="block text-xs font-medium text-gray-400" for="cfg-keep-monthly">Monthly</label>
+              <input id="cfg-keep-monthly" type="number" min="0" max="9999" bind:value={cfgKeepMonthly} placeholder="—"
+                class="w-full bg-gray-800/60 border border-gray-700/60 rounded-xl px-3 py-2.5
+                       text-sm text-white placeholder-gray-600 font-mono focus:outline-none
+                       focus:border-emerald-500/60" />
+            </div>
+            <div class="space-y-1">
+              <label class="block text-xs font-medium text-gray-400" for="cfg-keep-yearly">Yearly</label>
+              <input id="cfg-keep-yearly" type="number" min="0" max="9999" bind:value={cfgKeepYearly} placeholder="—"
+                class="w-full bg-gray-800/60 border border-gray-700/60 rounded-xl px-3 py-2.5
+                       text-sm text-white placeholder-gray-600 font-mono focus:outline-none
+                       focus:border-emerald-500/60" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Exclusion Rules -->
         <div class="bg-gray-900/60 border border-gray-800/60 rounded-2xl p-6 space-y-5">
           <div class="space-y-1">
             <label class="block text-xs font-medium text-gray-400" for="cfg-paths">
@@ -469,22 +642,24 @@
             <p class="text-sm text-gray-400">
               Filesystem paths discovered by the agent on the remote server.
             </p>
-            <button
-              onclick={() => sendCommand('discover')}
-              disabled={!!sendingCmd}
-              class="flex items-center gap-2 text-sm px-4 py-2 bg-gray-800 hover:bg-gray-700
-                     text-gray-300 rounded-xl transition-colors disabled:opacity-60"
-            >
-              {#if sendingCmd === 'discover'}
-                <span class="w-3.5 h-3.5 border-2 border-gray-300 border-t-transparent rounded-full animate-spin"></span>
-              {:else}
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-                </svg>
-              {/if}
-              Trigger Discovery
-            </button>
+            {#if role === 'admin'}
+              <button
+                onclick={() => sendCommand('discover')}
+                disabled={!!sendingCmd}
+                class="flex items-center gap-2 text-sm px-4 py-2 bg-gray-800 hover:bg-gray-700
+                       text-gray-300 rounded-xl transition-colors disabled:opacity-60"
+              >
+                {#if sendingCmd === 'discover'}
+                  <span class="w-3.5 h-3.5 border-2 border-gray-300 border-t-transparent rounded-full animate-spin"></span>
+                {:else}
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                  </svg>
+                {/if}
+                Trigger Discovery
+              </button>
+            {/if}
           </div>
 
           <div class="bg-gray-900/60 border border-gray-800/60 rounded-2xl overflow-hidden">
@@ -523,7 +698,8 @@
       {:else if activeTab === 'commands'}
         <div class="space-y-5">
 
-          <!-- Action buttons -->
+          <!-- Action buttons (admin only) -->
+          {#if role === 'admin'}
           <div class="bg-gray-900/60 border border-gray-800/60 rounded-2xl p-6 space-y-4">
             <h3 class="text-sm font-semibold text-white">Send Command to Agent</h3>
             <div class="grid sm:grid-cols-2 gap-3">
@@ -592,6 +768,7 @@
               </button>
             </div>
           </div>
+          {/if}
 
           <!-- Command history -->
           <div class="bg-gray-900/60 border border-gray-800/60 rounded-2xl overflow-hidden">
