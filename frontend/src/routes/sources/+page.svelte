@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { backupSources, type BackupSource } from '$lib/api';
+  import { backupSources, auth, type BackupSource } from '$lib/api';
   import { toast } from '$lib/toast';
 
   let sources     = $state<BackupSource[]>([]);
@@ -9,24 +9,30 @@
   let showModal   = $state(false);
   let newToken    = $state<string | null>(null);
   let creating    = $state(false);
+  let role        = $state<'admin' | 'viewer' | ''>('');
 
   // Form state
   let newName        = $state('');
   let newDescription = $state('');
   let nameError      = $state('');
 
-  async function load() {
-    loading = true;
+  async function load(silent = false) {
+    if (!silent) loading = true;
     try {
       sources = await backupSources.list();
     } catch (e) {
-      toast.error((e as Error).message);
+      if (!silent) toast.error((e as Error).message);
     } finally {
       loading = false;
     }
   }
 
-  onMount(load);
+  onMount(() => {
+    load();
+    auth.me().then(me => role = me.role).catch(() => {});
+    const timer = setInterval(() => load(true), 10_000);
+    return () => clearInterval(timer);
+  });
 
   function openModal() {
     newName = '';
@@ -118,16 +124,18 @@
         Remote servers that push backups to ResticVault via the restic REST protocol.
       </p>
     </div>
-    <button
-      onclick={openModal}
-      class="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white
-             text-sm font-medium rounded-xl transition-colors"
-    >
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-      </svg>
-      New Source
-    </button>
+    {#if role === 'admin'}
+      <button
+        onclick={openModal}
+        class="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white
+               text-sm font-medium rounded-xl transition-colors"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+        </svg>
+        New Source
+      </button>
+    {/if}
   </div>
 
   <!-- Source cards -->
@@ -211,22 +219,24 @@
             >
               Details
             </button>
-            <button
-              onclick={() => toggleDisabled(src)}
-              class="text-xs py-1.5 px-3 rounded-lg transition-colors
-                     {src.disabled
-                       ? 'text-emerald-400 hover:bg-emerald-500/10'
-                       : 'text-yellow-400 hover:bg-yellow-500/10'}"
-            >
-              {src.disabled ? 'Enable' : 'Disable'}
-            </button>
-            <button
-              onclick={() => deleteSource(src)}
-              class="text-xs text-red-400 hover:text-red-300 py-1.5 px-3 rounded-lg
-                     hover:bg-red-500/10 transition-colors"
-            >
-              Delete
-            </button>
+            {#if role === 'admin'}
+              <button
+                onclick={() => toggleDisabled(src)}
+                class="text-xs py-1.5 px-3 rounded-lg transition-colors
+                       {src.disabled
+                         ? 'text-emerald-400 hover:bg-emerald-500/10'
+                         : 'text-yellow-400 hover:bg-yellow-500/10'}"
+              >
+                {src.disabled ? 'Enable' : 'Disable'}
+              </button>
+              <button
+                onclick={() => deleteSource(src)}
+                class="text-xs text-red-400 hover:text-red-300 py-1.5 px-3 rounded-lg
+                       hover:bg-red-500/10 transition-colors"
+              >
+                Delete
+              </button>
+            {/if}
           </div>
         </div>
       {/each}
