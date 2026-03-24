@@ -343,6 +343,42 @@ sync_schedule() {
   fi
 }
 
+# ── Self-update ──────────────────────────────────────────────────────────────
+run_update() {
+  local command_id="${1:-}"
+  log "Self-update requested. Downloading latest agent-install.sh from ${RV_SERVER} ..."
+
+  local tmp_script
+  tmp_script="$(mktemp /tmp/resticvault-update-XXXXXX.sh)"
+
+  if ! curl -fsSL "${RV_SERVER}/agent-install.sh" -o "$tmp_script"; then
+    log "Update failed: could not download agent-install.sh"
+    rm -f "$tmp_script"
+    return 1
+  fi
+
+  chmod +x "$tmp_script"
+  log "Download complete. Re-running installer with current config ..."
+
+  # Source current config to get all parameters
+  source "$CONFIG_FILE"
+
+  # Re-run installer with the same parameters that were used initially.
+  # The installer overwrites the daemon script + systemd units, then
+  # systemd Restart=on-failure picks up the new version.
+  bash "$tmp_script" \
+    --server  "${RV_SERVER}" \
+    --token   "${RV_TOKEN}" \
+    --name    "${RV_NAME}" \
+    --paths   "${RV_PATHS}" \
+    >> "$LOG_FILE" 2>&1 &
+
+  rm -f "$tmp_script"
+  log "Installer launched in background. Agent will restart momentarily."
+  # Exit so systemd restarts us with the new binary
+  exit 0
+}
+
 # ── Main: heartbeat + command poll loop ──────────────────────────────────────
 run_daemon() {
   log "Agent starting. Connecting to ${RV_SERVER} as '${RV_NAME}' ..."
@@ -353,6 +389,16 @@ run_daemon() {
   rv_post heartbeat "$hb"
 
   init_repo
+
+  # One-time version check on startup
+  local server_version
+  server_version="$(curl -fsSL "${RV_SERVER}/api/sources/agent/version" 2>/dev/null \
+    | grep -o '"version":"[^"]*"' | cut -d'"' -f4 || echo "")"
+  if [[ -n "$server_version" && "$server_version" != "$AGENT_VERSION" ]]; then
+    log "Update available: local=$AGENT_VERSION server=$server_version"
+  else
+    log "Agent version $AGENT_VERSION is up to date."
+  fi
 
   while true; do
     hb=$(printf '{"agentVersion":"%s"}' "$AGENT_VERSION")
@@ -378,6 +424,7 @@ run_daemon() {
       case "$CMD_TYPE" in
         backup)   run_backup "$CMD_ID" ;;
         discover) run_discover ;;
+        update)   run_update "$CMD_ID" ;;
         uninstall)
           log "Uninstall command received. Stopping agent..."
           systemctl stop resticvault-agent-backup.timer resticvault-agent.service 2>/dev/null || true

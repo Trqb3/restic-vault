@@ -403,6 +403,8 @@ export const backupSources = {
     request<AgentDiscoveredPath[]>('GET', `/api/sources/${id}/paths`),
   getProgress: (id: number) =>
     request<BackupProgress>('GET', `/api/sources/${id}/progress`),
+  getCurrentAgentVersion: () =>
+    request<{ version: string }>('GET', '/api/sources/current-agent-version').then(d => d.version),
 };
 
 export const exclusionProfiles = {

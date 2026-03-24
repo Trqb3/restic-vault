@@ -13,6 +13,20 @@ import type { BackupSource, AgentCommand, SourceExclusionRule, Repository } from
 
 const router = Router();
 
+// Current agent version bundled with this server build.
+// Bump this whenever agent-install.sh daemon logic changes.
+const CURRENT_AGENT_VERSION = '1.1.5';
+
+/** GET /api/sources/agent/version — public (no auth), used by agent to check for updates */
+router.get('/agent/version', (_req, res) => {
+  res.json({ version: CURRENT_AGENT_VERSION });
+});
+
+/** GET /api/sources/current-agent-version — admin only, used by UI */
+router.get('/current-agent-version', requireAuth, (_req, res) => {
+  res.json({ version: CURRENT_AGENT_VERSION });
+});
+
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 const createSourceSchema = z.object({
@@ -291,7 +305,7 @@ router.get('/:id/logs', requireAuth, (req, res) => {
 /** POST /api/sources/:id/commands  — enqueue a command for the agent */
 router.post('/:id/commands', requireAuth, requireAdmin, (req, res) => {
   const schema = z.object({
-    command: z.enum(['backup', 'uninstall', 'rotate_token', 'discover']),
+    command: z.enum(['backup', 'uninstall', 'rotate_token', 'discover', 'update']),
     params:  z.record(z.string(), z.unknown()).optional(),
   });
   const parsed = schema.safeParse(req.body);

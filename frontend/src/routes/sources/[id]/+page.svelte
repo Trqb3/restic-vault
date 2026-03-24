@@ -46,6 +46,9 @@
   // Remote actions
   let sendingCmd = $state<string | null>(null);
 
+  // Agent version tracking
+  let serverAgentVersion = $state<string | null>(null);
+
   // Rotate token
   let rotating   = $state(false);
 
@@ -98,6 +101,7 @@
   onMount(() => {
     load();
     auth.me().then(me => role = me.role).catch(() => {});
+    backupSources.getCurrentAgentVersion().then(v => serverAgentVersion = v).catch(() => {});
     pollProgress();
     progressTimer = setInterval(pollProgress, 3000);
     const dataTimer = setInterval(() => {
@@ -259,6 +263,16 @@
           {#if source.disabled}
             <span class="text-sm text-red-400 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-full">
               Disabled
+            </span>
+          {/if}
+          {#if serverAgentVersion && source.agent_version && source.agent_version !== serverAgentVersion}
+            <span class="flex items-center gap-1.5 text-sm text-amber-400 bg-amber-500/10
+                         border border-amber-500/20 px-2.5 py-1 rounded-full">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+              </svg>
+              Update available ({source.agent_version} → {serverAgentVersion})
             </span>
           {/if}
         </div>
@@ -745,6 +759,29 @@
                   <p class="text-xs text-blue-400/60 mt-0.5">Scan remote filesystem</p>
                 </div>
               </button>
+
+              {#if serverAgentVersion && source.agent_version && source.agent_version !== serverAgentVersion}
+              <button
+                onclick={() => sendCommand('update')}
+                disabled={!!sendingCmd || source.disabled === 1}
+                class="flex items-center gap-3 p-4 bg-amber-500/10 border border-amber-500/20
+                       hover:bg-amber-500/15 text-amber-300 rounded-xl transition-colors
+                       disabled:opacity-50 text-left"
+              >
+                {#if sendingCmd === 'update'}
+                  <span class="w-5 h-5 border-2 border-amber-300 border-t-transparent rounded-full animate-spin shrink-0"></span>
+                {:else}
+                  <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                  </svg>
+                {/if}
+                <div>
+                  <p class="font-medium text-sm">Update Agent</p>
+                  <p class="text-xs text-amber-400/60 mt-0.5">{source.agent_version} → {serverAgentVersion}</p>
+                </div>
+              </button>
+              {/if}
 
               <button
                 onclick={() => sendCommand('uninstall')}
