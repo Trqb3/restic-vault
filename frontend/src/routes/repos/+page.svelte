@@ -408,30 +408,28 @@
     </form>
   {/snippet}
   {#snippet footer()}
-    <div class="flex justify-between items-center">
-      <button
-              onclick={() => showAddModal = false}
-              class="px-4 py-2 text-sm text-gray-400 hover:text-white bg-transparent hover:bg-gray-800
-       rounded-lg transition-colors border border-gray-700"
-      >
-        Abbrechen
-      </button>
-      <button
-              form="add-form" type="submit" disabled={addLoading}
-              class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600
-       hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors"
-      >
-        {#if addLoading}
-          <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-          Hinzufügen…
-        {:else}
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-          </svg>
-          Repository hinzufügen
-        {/if}
-      </button>
-    </div>
+    <button
+            onclick={() => showAddModal = false}
+            class="px-4 py-2 text-sm text-gray-400 hover:text-white bg-transparent hover:bg-gray-800
+     rounded-lg transition-colors border border-gray-700"
+    >
+      Abbrechen
+    </button>
+    <button
+            form="add-form" type="submit" disabled={addLoading}
+            class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600
+     hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors"
+    >
+      {#if addLoading}
+        <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+        Hinzufügen…
+      {:else}
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+        </svg>
+        Repository hinzufügen
+      {/if}
+    </button>
   {/snippet}
 </Modal>
 
@@ -469,29 +467,27 @@
     </div>
   {/snippet}
   {#snippet footer()}
-    <div class="flex justify-between items-center">
-      <button
-              onclick={() => showSettingsModal = false}
-              class="px-4 py-2 text-sm text-gray-400 hover:text-white bg-transparent hover:bg-gray-800
-               rounded-lg transition-colors border border-gray-700"
-      >
-        Abbrechen
-      </button>
-      <button
-              onclick={saveSettings} disabled={settingsLoading}
-              class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600
-               hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors"
-      >
-        {#if settingsLoading}
-          <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-          Speichern…
-        {:else}
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-          </svg>
-          Speichern
-        {/if}
-      </button>
-    </div>
+    <button
+            onclick={() => showSettingsModal = false}
+            class="px-4 py-2 text-sm text-gray-400 hover:text-white bg-transparent hover:bg-gray-800
+             rounded-lg transition-colors border border-gray-700"
+    >
+      Abbrechen
+    </button>
+    <button
+            onclick={saveSettings} disabled={settingsLoading}
+            class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600
+             hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors"
+    >
+      {#if settingsLoading}
+        <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+        Speichern…
+      {:else}
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+        </svg>
+        Speichern
+      {/if}
+    </button>
   {/snippet}
 </Modal>
