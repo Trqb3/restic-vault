@@ -4,15 +4,16 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import * as OTPAuth from 'otpauth';
 import QRCode from 'qrcode';
-import { getDb } from '../db/index.js';
+import { getDb } from '../db';
 import { requireAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { encrypt, decrypt } from '../services/crypto.js';
 import { auditLog } from '../services/audit.js';
 import { fireNotificationEvent } from '../services/notifications.js';
-import type { User } from '../db/index.js';
+import type { User } from '../db';
+import type { Database } from 'better-sqlite3';
 
-const router = Router();
+const router: Router = Router();
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -44,8 +45,8 @@ function makeTOTP(username: string, base32Secret: string): OTPAuth.TOTP {
 }
 
 function issueSessionCookie(res: Parameters<Router>[1], user: User): void {
-  const secret = process.env.JWT_SECRET!;
-  const token = jwt.sign(
+  const secret: string = process.env.JWT_SECRET!;
+  const token: string = jwt.sign(
     { userId: user.id, username: user.username, role: user.role },
     secret,
     { expiresIn: '24h', algorithm: 'HS256' },
@@ -60,17 +61,17 @@ function issueSessionCookie(res: Parameters<Router>[1], user: User): void {
 
 // ── POST /login ───────────────────────────────────────────────────────────────
 
-router.post('/login', validate(loginSchema), (req, res) => {
+router.post('/login', validate(loginSchema), (req, res): void => {
   const { username, password } = req.body as z.infer<typeof loginSchema>;
 
-  const db = getDb();
+  const db: Database = getDb();
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;
 
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     auditLog({ eventType: 'login_failure', req, username, success: false });
 
     // Check for burst threshold (3+ failures in 15 min from same IP) and notify
-    const db = getDb();
+    const db: Database = getDb();
     const recentFailures = db.prepare(`
       SELECT COUNT(*) as c, ip_address FROM audit_logs
       WHERE event_type = 'login_failure'
@@ -104,7 +105,7 @@ router.post('/login', validate(loginSchema), (req, res) => {
 
   // 2FA enabled — issue a short-lived pending token, don't create a full session yet
   if (user.totp_enabled) {
-    const pendingToken = jwt.sign(
+    const pendingToken: string = jwt.sign(
       { userId: user.id, pending2fa: true },
       jwtSecret,
       { expiresIn: '5m', algorithm: 'HS256' },
@@ -126,7 +127,7 @@ router.post('/login', validate(loginSchema), (req, res) => {
 
 // ── POST /logout ──────────────────────────────────────────────────────────────
 
-router.post('/logout', (req, res) => {
+router.post('/logout', (req, res): void => {
   auditLog({ eventType: 'logout', req, username: req.user?.username });
   res.clearCookie('token');
   res.clearCookie('rv_2fa_pending');
@@ -135,8 +136,8 @@ router.post('/logout', (req, res) => {
 
 // ── GET /me ───────────────────────────────────────────────────────────────────
 
-router.get('/me', requireAuth, (req, res) => {
-  const db = getDb();
+router.get('/me', requireAuth, (req, res): void => {
+  const db: Database = getDb();
   const row = db
     .prepare('SELECT totp_enabled FROM users WHERE id = ?')
     .get(req.user!.userId) as { totp_enabled: number } | undefined;
@@ -150,7 +151,7 @@ router.get('/me', requireAuth, (req, res) => {
 
 // ── POST /2fa/challenge — second step of login ────────────────────────────────
 
-router.post('/2fa/challenge', validate(totpCodeSchema), (req, res) => {
+router.post('/2fa/challenge', validate(totpCodeSchema), (req, res): void => {
   const pendingToken = req.cookies?.rv_2fa_pending;
   if (!pendingToken) {
     res.status(401).json({ error: 'No pending 2FA session' });
@@ -179,7 +180,7 @@ router.post('/2fa/challenge', validate(totpCodeSchema), (req, res) => {
 
   const { code } = req.body as z.infer<typeof totpCodeSchema>;
 
-  const db = getDb();
+  const db: Database = getDb();
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.userId) as User | undefined;
   if (!user || !user.totp_secret) {
     res.status(401).json({ error: 'User not found' });
@@ -201,8 +202,8 @@ router.post('/2fa/challenge', validate(totpCodeSchema), (req, res) => {
 
 // ── POST /2fa/setup — generate secret, store encrypted (not yet enabled) ──────
 
-router.post('/2fa/setup', requireAuth, async (req, res) => {
-  const db = getDb();
+router.post('/2fa/setup', requireAuth, async (req, res): Promise<void> => {
+  const db: Database = getDb();
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.userId) as User | undefined;
   if (!user) {
     res.status(404).json({ error: 'User not found' });
@@ -222,9 +223,9 @@ router.post('/2fa/setup', requireAuth, async (req, res) => {
     secret: new OTPAuth.Secret({ size: 20 }),
   });
 
-  const secretBase32 = totp.secret.base32;
-  const otpauthUrl = totp.toString();
-  const qrCode = await QRCode.toDataURL(otpauthUrl);
+  const secretBase32: string = totp.secret.base32;
+  const otpauthUrl: string = totp.toString();
+  const qrCode: string = await QRCode.toDataURL(otpauthUrl);
 
   // Store encrypted — 2FA isn't active until /verify succeeds
   db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?')
@@ -235,10 +236,10 @@ router.post('/2fa/setup', requireAuth, async (req, res) => {
 
 // ── POST /2fa/verify — confirm code and activate 2FA ─────────────────────────
 
-router.post('/2fa/verify', requireAuth, validate(totpCodeSchema), (req, res) => {
+router.post('/2fa/verify', requireAuth, validate(totpCodeSchema), (req, res): void => {
   const { code } = req.body as z.infer<typeof totpCodeSchema>;
 
-  const db = getDb();
+  const db: Database = getDb();
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.userId) as User | undefined;
   if (!user?.totp_secret) {
     res.status(400).json({ error: 'Run /2fa/setup first' });
@@ -261,10 +262,10 @@ router.post('/2fa/verify', requireAuth, validate(totpCodeSchema), (req, res) => 
 
 // ── POST /2fa/disable — deactivate 2FA (requires password + TOTP code) ────────
 
-router.post('/2fa/disable', requireAuth, validate(disable2faSchema), (req, res) => {
+router.post('/2fa/disable', requireAuth, validate(disable2faSchema), (req, res): void => {
   const { password, code } = req.body as z.infer<typeof disable2faSchema>;
 
-  const db = getDb();
+  const db: Database = getDb();
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.userId) as User | undefined;
   if (!user) {
     res.status(404).json({ error: 'User not found' });

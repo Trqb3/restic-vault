@@ -58,10 +58,6 @@ export function getCachedAuth(rawToken: string): CacheEntry | undefined {
   return entry;
 }
 
-export function evictFromCache(rawToken: string): void {
-  authCache.delete(rawToken);
-}
-
 export function evictSourceFromCache(sourceId: number): void {
   for (const [key, entry] of authCache) {
     if (entry.sourceId === sourceId) authCache.delete(key);

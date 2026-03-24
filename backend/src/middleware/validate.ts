@@ -1,4 +1,4 @@
-import { z, type ZodSchema } from 'zod';
+import {z, ZodSafeParseResult, type ZodType} from 'zod';
 import type { Request, Response, NextFunction } from 'express';
 
 /**
@@ -6,13 +6,13 @@ import type { Request, Response, NextFunction } from 'express';
  * Responds 400 with the first human-readable error message on failure.
  */
 export function validate<T>(
-  schema: ZodSchema<T>,
+  schema: ZodType<T>,
   source: 'body' | 'params' | 'query' = 'body',
 ) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const result = schema.safeParse(req[source]);
+    const result: ZodSafeParseResult<T> = schema.safeParse(req[source]);
     if (!result.success) {
-      const msg = result.error.issues[0]?.message ?? 'Validation error';
+      const msg: string = result.error.issues[0]?.message ?? 'Validation error';
       res.status(400).json({ error: msg });
       return;
     }

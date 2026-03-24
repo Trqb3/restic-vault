@@ -1,5 +1,6 @@
 import type { Request } from 'express';
-import { getDb } from '../db/index.js';
+import { getDb } from '../db';
+import type { Database } from 'better-sqlite3';
 
 export type AuditEventType =
   | 'login_success'
@@ -43,7 +44,7 @@ function extractIp(req: Request): string | null {
 export function auditLog(opts: AuditOptions): void {
   const { eventType, req, username = null, success = true, details = null } = opts;
   try {
-    const db = getDb();
+    const db: Database = getDb();
     const ip = extractIp(req);
     const userAgent = (req.headers['user-agent'] ?? null) as string | null;
     const detailsStr = details == null

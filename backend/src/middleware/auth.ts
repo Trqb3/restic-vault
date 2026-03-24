@@ -1,4 +1,4 @@
-import type { Request, Response, NextFunction } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 
 export interface AuthPayload {
@@ -34,11 +34,14 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     return;
   }
 
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    res.status(500).json({ error: 'Server misconfiguration' });
+    return;
+  }
+
   try {
-    const secret = process.env.JWT_SECRET;
-    if (!secret) throw new Error('JWT_SECRET not set');
-    const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as AuthPayload;
-    req.user = payload;
+    req.user = jwt.verify(token, secret, { algorithms: ['HS256'] }) as AuthPayload;
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired session' });

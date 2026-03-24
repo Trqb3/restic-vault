@@ -1,11 +1,19 @@
 import fs from 'fs';
 import path from 'path';
 import * as cron from 'node-cron';
-import { getDb, type Repository, type Snapshot } from '../db/index.js';
+import { getDb, type Repository, type Snapshot } from '../db';
 import { decrypt } from './crypto.js';
-import { listSnapshots, classifySnapshots, getSnapshotStats, getSnapshotDiff, getRepoStats } from './restic.js';
+import {
+  listSnapshots,
+  classifySnapshots,
+  getSnapshotStats,
+  getSnapshotDiff,
+  getRepoStats,
+  SnapshotStatsResult
+} from './restic.js';
 import { sshContextForRepo, type SshKeyContext } from './ssh.js';
 import { fireNotificationEvent } from './notifications.js';
+import type { Database } from 'better-sqlite3';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -26,7 +34,7 @@ function findPreviousSnapshot(
     WHERE repo_id = ? AND hostname = ? AND time < ?
     ORDER BY time DESC
   `).all(repoId, hostname, beforeTime) as { snapshot_id: string; paths: string | null }[];
-  return candidates.find((c) => parsePaths(c.paths) === snapPaths);
+  return candidates.find((c): boolean => parsePaths(c.paths) === snapPaths);
 }
 
 // ── Snapshot-level stat caching ───────────────────────────────────────────────
@@ -38,7 +46,7 @@ async function fetchAndCacheSnapshotStats(
   password: string | undefined,
   extraArgs: string[] = []
 ): Promise<void> {
-  const db = getDb();
+  const db: Database = getDb();
 
   const snap = db.prepare(
     'SELECT hostname, time, paths FROM snapshots WHERE snapshot_id = ? AND repo_id = ?'
@@ -46,14 +54,14 @@ async function fetchAndCacheSnapshotStats(
 
   if (!snap?.hostname) return;
 
-  let restoreSize = 0;
-  let fileCount   = 0;
+  let restoreSize: number = 0;
+  let fileCount: number   = 0;
   let addedSize:      number | null = null;
   let filesNew:       number | null = null;
   let filesChanged:   number | null = null;
   let filesUnmodified: number | null = null;
 
-  const snapPaths = parsePaths(snap.paths);
+  const snapPaths: string = parsePaths(snap.paths);
   const previous  = findPreviousSnapshot(db, repoId, snap.hostname, snap.time, snapPaths);
 
   if (previous) {
@@ -92,7 +100,7 @@ async function fetchAndCacheSnapshotStats(
     // Fall back to restic stats if diff didn't give us sizes or previous wasn't cached
     if (restoreSize === 0) {
       try {
-        const stats = await getSnapshotStats(repoPath, snapshotId, password, extraArgs);
+        const stats: SnapshotStatsResult = await getSnapshotStats(repoPath, snapshotId, password, extraArgs);
         restoreSize = stats.restore_size;
         fileCount   = stats.file_count;
       } catch (err) {
@@ -108,7 +116,7 @@ async function fetchAndCacheSnapshotStats(
   } else {
     // First snapshot from this host+paths — need restic stats, everything counts as new
     try {
-      const stats = await getSnapshotStats(repoPath, snapshotId, password, extraArgs);
+      const stats: SnapshotStatsResult = await getSnapshotStats(repoPath, snapshotId, password, extraArgs);
       restoreSize = stats.restore_size;
       fileCount   = stats.file_count;
     } catch (err) {
@@ -339,10 +347,10 @@ export async function indexRepo(repo: Repository): Promise<void> {
       SELECT s.snapshot_id FROM snapshots s
       LEFT JOIN snapshot_stats ss ON ss.snapshot_id = s.snapshot_id
       WHERE s.repo_id = ? AND ss.snapshot_id IS NULL
-      ORDER BY s.time ASC
+      ORDER BY s.time
     `).all(repo.id) as { snapshot_id: string }[];
 
-    // Small pause between snapshot stat fetches — restic is CPU-heavy and we want to
+    // Small pause between snapshot stat fetches — restic is CPU-heavy, and we want to
     // keep the system responsive. 100ms is enough to avoid a solid CPU wall.
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
     // Cap: process at most this many heavy (diff) fetches per index run.
@@ -366,7 +374,7 @@ export async function indexRepo(repo: Repository): Promise<void> {
         AND ss.files_changed    IS NULL
         AND ss.files_unmodified IS NULL
         AND ss.restore_size     IS NOT NULL
-      ORDER BY s.time ASC
+      ORDER BY s.time
     `).all(repo.id) as { snapshot_id: string }[];
 
     if (stale.length > 0) {
@@ -387,7 +395,7 @@ export async function indexRepo(repo: Repository): Promise<void> {
     console.log(`[indexer] repo ${repo.id} "${repo.name}": index complete`);
 
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg: string = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack : '';
     console.error(`[indexer] repo ${repo.id} "${repo.name}" FAILED: ${msg}`);
     if (stack) console.error(`[indexer] repo ${repo.id} stack: ${stack.slice(0, 500)}`);
@@ -401,7 +409,7 @@ export async function indexRepo(repo: Repository): Promise<void> {
       event:  'backup_failed',
       repoId: repo.id,
       data:   { repoName: repo.name, repoPath: repo.path, errorMessage: msg },
-    }).catch((e) => console.error('[indexer] notification failed:', e));
+    }).catch((e): void => console.error('[indexer] notification failed:', e));
   } finally {
     sshCtx?.cleanup();
   }
@@ -411,12 +419,12 @@ export async function indexRepo(repo: Repository): Promise<void> {
 // (all reads use --no-lock). Each repo still processes its snapshots sequentially internally.
 // With N repos, total time ≈ slowest single repo instead of sum of all repos.
 export async function indexAllRepos(): Promise<void> {
-  const db = getDb();
+  const db: Database = getDb();
   const repos = db.prepare('SELECT * FROM repositories').all() as Repository[];
   console.log(`[indexer] starting full index run for ${repos.length} repos`);
   await Promise.all(
-    repos.map((r) =>
-      indexRepo(r).catch((err) =>
+    repos.map((r: Repository): Promise<void> =>
+      indexRepo(r).catch((err): void =>
         console.error(`[indexer] indexRepo ${r.id} threw:`, err instanceof Error ? err.message : err)
       )
     )
@@ -436,8 +444,8 @@ export async function scanBaseDir(baseDir: string): Promise<string[]> {
       return;
     }
 
-    const names = new Set(entries.filter((e) => !e.isDirectory()).map((e) => e.name));
-    const dirs = new Set(entries.filter((e) => e.isDirectory()).map((e) => e.name));
+    const names = new Set(entries.filter((e): boolean => !e.isDirectory()).map((e): string => e.name));
+    const dirs = new Set(entries.filter((e): boolean => e.isDirectory()).map((e): string => e.name));
 
     if (names.has('config') && dirs.has('data')) {
       found.push(dir);
@@ -468,7 +476,7 @@ async function recordSizeHistory(
   password: string | undefined,
   sshArgs: string[],
 ): Promise<void> {
-  const db = getDb();
+  const db: Database = getDb();
   try {
     // Only record once per hour max — avoid duplicate points on frequent re-indexing
     const lastRecord = db.prepare(`
@@ -477,7 +485,7 @@ async function recordSizeHistory(
       ORDER BY recorded_at DESC LIMIT 1
     `).get(repo.id) as { recorded_at: number } | undefined;
 
-    const oneHourAgo = Math.floor(Date.now() / 1000) - 60 * 60;
+    const oneHourAgo: number = Math.floor(Date.now() / 1000) - 60 * 60;
     if (lastRecord && lastRecord.recorded_at > oneHourAgo) return;
 
     const [rawStats, restoreStats] = await Promise.all([
@@ -485,7 +493,7 @@ async function recordSizeHistory(
       getRepoStats(repo.path, password, undefined, sshArgs),
     ]);
 
-    const snapshotCount = (db.prepare(
+    const snapshotCount: number = (db.prepare(
       'SELECT COUNT(*) as c FROM snapshots WHERE repo_id = ?',
     ).get(repo.id) as { c: number }).c;
 
@@ -500,7 +508,7 @@ async function recordSizeHistory(
 }
 
 export async function backfillSizeHistory(): Promise<void> {
-  const db = getDb();
+  const db: Database = getDb();
   const repos = db.prepare(`
     SELECT r.* FROM repositories r
     LEFT JOIN repo_size_history h ON h.repo_id = r.id
@@ -532,7 +540,7 @@ let currentTask: cron.ScheduledTask | null = null;
 
 function minutesToCron(minutes: number): string {
   if (minutes < 60) return `*/${minutes} * * * *`;
-  const hours = Math.floor(minutes / 60);
+  const hours: number = Math.floor(minutes / 60);
   if (minutes % 60 === 0) return `0 */${hours} * * *`;
   return `*/${minutes} * * * *`; // fallback for non-round hours
 }
@@ -542,11 +550,11 @@ export function startIndexer(intervalMinutes: number = 15): void {
     currentTask.stop();
     currentTask = null;
   }
-  const schedule = minutesToCron(intervalMinutes);
+  const schedule: string = minutesToCron(intervalMinutes);
   console.log(`[indexer] Starting with schedule: ${schedule} (every ${intervalMinutes} min)`);
-  currentTask = cron.schedule(schedule, () => {
+  currentTask = cron.schedule(schedule, (): void => {
     console.log('[indexer] Running scheduled index...');
-    indexAllRepos().catch((err) =>
+    indexAllRepos().catch((err): void =>
       console.error('[indexer] Error during scheduled indexing:', err)
     );
   });
@@ -555,9 +563,4 @@ export function startIndexer(intervalMinutes: number = 15): void {
 export function restartIndexer(intervalMinutes: number): void {
   console.log(`[indexer] Restarting with interval: ${intervalMinutes} minutes`);
   startIndexer(intervalMinutes);
-}
-
-export function stopIndexer(): void {
-  currentTask?.stop();
-  currentTask = null;
 }

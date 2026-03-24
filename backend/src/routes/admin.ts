@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import { z } from 'zod';
-import { getDb, type SshConnection } from '../db/index.js';
+import { getDb, type SshConnection } from '../db';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { validate, idParamsSchema } from '../middleware/validate.js';
 import { encrypt, decrypt } from '../services/crypto.js';
@@ -47,7 +47,7 @@ router.get('/users', (_req, res) => {
            COUNT(p.repo_id) as repo_count
     FROM users u
     LEFT JOIN user_repo_permissions p ON p.user_id = u.id
-    GROUP BY u.id
+    GROUP BY u.id, u.username, u.role, u.created_at, u.totp_enabled
     ORDER BY u.created_at
   `).all();
   res.json(users);

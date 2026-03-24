@@ -149,10 +149,15 @@
       auth.me().then((me) => { username = me.username; role = me.role; }).catch(() => goto('/login'));
     }
   });
+
+
+  function closestUserMenu(target: EventTarget | null): boolean {
+    return !!(target as Element)?.closest('[data-user-menu]');
+  }
 </script>
 
 <svelte:window onclick={(e) => {
-  if (!(e.target as Element).closest('[data-user-menu]')) {
+  if (!closestUserMenu(e.target)) {
     setTimeout(() => userMenuOpen = false, 100);
   }
 }} />

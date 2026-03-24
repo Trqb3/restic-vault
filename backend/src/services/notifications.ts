@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { getDb } from '../db/index.js';
+import { getDb } from '../db';
 import { sendAndLog, getDefaultProviderId } from './email.js';
 import {
   backupFailedTemplate,

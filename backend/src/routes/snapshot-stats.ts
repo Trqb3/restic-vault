@@ -1,20 +1,21 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { getDb, type Repository, type Snapshot, type SnapshotStats } from '../db/index.js';
+import { getDb, type Repository, type Snapshot, type SnapshotStats } from '../db';
 import { requireAuth } from '../middleware/auth.js';
 import { validate, snapshotIdSchema } from '../middleware/validate.js';
 import { decrypt } from '../services/crypto.js';
 import { getSnapshotStats, getSnapshotDiff } from '../services/restic.js';
+import type { Database } from 'better-sqlite3';
 
-const router = Router({ mergeParams: true });
+const router: Router = Router({ mergeParams: true });
 router.use(requireAuth);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function canAccessRepo(userId: number, role: string, repoId: string | number): boolean {
   if (role === 'admin') return true;
-  const db = getDb();
-  const numericId = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
+  const db: Database = getDb();
+  const numericId: number = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
   return !!db.prepare(
     'SELECT 1 FROM user_repo_permissions WHERE user_id = ? AND repo_id = ?'
   ).get(userId, numericId);
@@ -28,10 +29,10 @@ const statsParamsSchema = z.object({ snapshotId: snapshotIdSchema });
 
 router.get('/:snapshotId/stats',
   validate(statsParamsSchema, 'params'),
-  async (req: import('express').Request<{ repoId: string; snapshotId: string }>, res) => {
+  async (req: import('express').Request<{ repoId: string; snapshotId: string }>, res): Promise<void> => {
     const { repoId, snapshotId } = req.params;
-    const numericRepoId = parseInt(repoId, 10);
-    const db = getDb();
+    const numericRepoId: number = parseInt(repoId, 10);
+    const db: Database = getDb();
 
     // Authorization: viewer must have explicit permission
     if (!canAccessRepo(req.user!.userId, req.user!.role, numericRepoId)) {
@@ -67,7 +68,7 @@ router.get('/:snapshotId/stats',
 
     let prevId: string | null = null;
     if (snapFull?.hostname) {
-      const snapPaths = (() => {
+      const snapPaths: string = ((): string => {
         try { return (JSON.parse(snapFull.paths ?? '[]') as string[]).sort().join(','); }
         catch { return ''; }
       })();
@@ -78,7 +79,7 @@ router.get('/:snapshotId/stats',
         ORDER BY time DESC
       `).all(numericRepoId, snapFull.hostname, snapFull.time) as { snapshot_id: string; paths: string | null }[];
 
-      const prev = candidates.find((c) => {
+      const prev = candidates.find((c): boolean => {
         try { return (JSON.parse(c.paths ?? '[]') as string[]).sort().join(',') === snapPaths; }
         catch { return false; }
       });
@@ -101,7 +102,7 @@ router.get('/:snapshotId/stats',
     let   files_new         = diffVal?.files_new        ?? null;
     let   files_changed     = diffVal?.files_changed     ?? null;
     let   files_unmodified  = diffVal?.files_unmodified  ?? null;
-    const fetched_at        = new Date().toISOString();
+    const fetched_at: string        = new Date().toISOString();
 
     if (files_unmodified === null && files_new !== null && files_changed !== null && file_count !== null) {
       files_unmodified = Math.max(0, file_count - files_new - files_changed);

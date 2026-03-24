@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { getDb } from '../db/index.js';
+import { getDb } from '../db';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { encrypt } from '../services/crypto.js';
 import { sendEmail } from '../services/email.js';
 import type { EmailProviderRow } from '../types/db.js';
+import type { Database, RunResult } from 'better-sqlite3';
 
-const router = Router();
+const router: Router = Router();
 router.use(requireAuth, requireAdmin);
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -18,13 +19,13 @@ const smtpConfigSchema = z.object({
   secure:      z.boolean(),
   username:    z.string(),
   password:    z.string(),
-  fromAddress: z.string().email(),
+  fromAddress: z.email(),
   fromName:    z.string().min(1),
 });
 
 const apiKeyConfigSchema = z.object({
   apiKey:      z.string().min(1),
-  fromAddress: z.string().email(),
+  fromAddress: z.email(),
   fromName:    z.string().min(1),
 });
 
@@ -32,7 +33,7 @@ const mailgunConfigSchema = z.object({
   apiKey:      z.string().min(1),
   domain:      z.string().min(1),
   region:      z.enum(['us', 'eu']),
-  fromAddress: z.string().email(),
+  fromAddress: z.email(),
   fromName:    z.string().min(1),
 });
 
@@ -40,7 +41,7 @@ const sesConfigSchema = z.object({
   accessKeyId:     z.string().min(1),
   secretAccessKey: z.string().min(1),
   region:          z.string().min(1),
-  fromAddress:     z.string().email(),
+  fromAddress:     z.email(),
   fromName:        z.string().min(1),
 });
 
@@ -64,29 +65,29 @@ const ruleSchema = z.object({
   repoIds:         z.array(z.number().int().positive()).nullable().optional(),
   sourceIds:       z.array(z.number().int().positive()).nullable().optional(),
   severityMin:     z.enum(['info', 'warning', 'error']).optional(),
-  recipients:      z.array(z.string().email()).min(1).max(20),
+  recipients:      z.array(z.email()).min(1).max(20),
   subjectTemplate: z.string().max(256).optional(),
 });
 
 // ── Provider routes ───────────────────────────────────────────────────────────
 
-router.get('/providers', (_req, res) => {
-  const db = getDb();
+router.get('/providers', (_req, res): void => {
+  const db: Database = getDb();
   const providers = db.prepare(
     'SELECT id, name, provider, is_default, enabled, created_at FROM email_providers ORDER BY created_at DESC'
   ).all();
   res.json(providers);
 });
 
-router.post('/providers', validate(providerSchema), (req, res) => {
-  const db = getDb();
+router.post('/providers', validate(providerSchema), (req, res): void => {
+  const db: Database = getDb();
   const { name, provider, isDefault, enabled, config } = req.body as z.infer<typeof providerSchema>;
 
   if (isDefault) {
     db.prepare('UPDATE email_providers SET is_default = 0').run();
   }
 
-  const result = db.prepare(`
+  const result: RunResult = db.prepare(`
     INSERT INTO email_providers (name, provider, config, is_default, enabled)
     VALUES (?, ?, ?, ?, ?)
   `).run(name, provider, encrypt(JSON.stringify(config)), isDefault ? 1 : 0, enabled !== false ? 1 : 0);
@@ -94,8 +95,8 @@ router.post('/providers', validate(providerSchema), (req, res) => {
   res.status(201).json({ id: result.lastInsertRowid });
 });
 
-router.patch('/providers/:id', validate(providerSchema.partial()), (req, res) => {
-  const db = getDb();
+router.patch('/providers/:id', validate(providerSchema.partial()), (req, res): void => {
+  const db: Database = getDb();
   const existing = db.prepare('SELECT * FROM email_providers WHERE id = ?').get(req.params.id) as EmailProviderRow | undefined;
   if (!existing) { res.status(404).json({ error: 'Not found' }); return; }
 
@@ -125,14 +126,14 @@ router.patch('/providers/:id', validate(providerSchema.partial()), (req, res) =>
   res.json({ ok: true });
 });
 
-router.delete('/providers/:id', (req, res) => {
+router.delete('/providers/:id', (req, res): void => {
   getDb().prepare('DELETE FROM email_providers WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
 // POST /api/notifications/providers/:id/test — send test email
-router.post('/providers/:id/test', validate(z.object({ to: z.string().email() })), async (req, res) => {
-  const db = getDb();
+router.post('/providers/:id/test', validate(z.object({ to: z.email() })), async (req, res): Promise<void> => {
+  const db: Database = getDb();
   const row = db.prepare('SELECT id FROM email_providers WHERE id = ?').get(req.params.id);
   if (!row) { res.status(404).json({ error: 'Not found' }); return; }
 
@@ -151,15 +152,15 @@ router.post('/providers/:id/test', validate(z.object({ to: z.string().email() })
 
 // ── Rule routes ───────────────────────────────────────────────────────────────
 
-router.get('/rules', (_req, res) => {
+router.get('/rules', (_req, res): void => {
   res.json(getDb().prepare('SELECT * FROM notification_rules ORDER BY created_at DESC').all());
 });
 
-router.post('/rules', validate(ruleSchema), (req, res) => {
-  const db = getDb();
+router.post('/rules', validate(ruleSchema), (req, res): void => {
+  const db: Database = getDb();
   const b  = req.body as z.infer<typeof ruleSchema>;
 
-  const result = db.prepare(`
+  const result: RunResult = db.prepare(`
     INSERT INTO notification_rules (
       name, provider_id, enabled, trigger_type, events,
       schedule_type, schedule_day, schedule_hour,
@@ -184,8 +185,8 @@ router.post('/rules', validate(ruleSchema), (req, res) => {
   res.status(201).json({ id: result.lastInsertRowid });
 });
 
-router.patch('/rules/:id', validate(ruleSchema.partial()), (req, res) => {
-  const db = getDb();
+router.patch('/rules/:id', validate(ruleSchema.partial()), (req, res): void => {
+  const db: Database = getDb();
   if (!db.prepare('SELECT id FROM notification_rules WHERE id = ?').get(req.params.id)) {
     res.status(404).json({ error: 'Not found' }); return;
   }
@@ -220,14 +221,14 @@ router.patch('/rules/:id', validate(ruleSchema.partial()), (req, res) => {
   res.json({ ok: true });
 });
 
-router.delete('/rules/:id', (req, res) => {
+router.delete('/rules/:id', (req, res): void => {
   getDb().prepare('DELETE FROM notification_rules WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
 // ── Log route ────────────────────────────────────────────────────────────────
 
-router.get('/log', (_req, res) => {
+router.get('/log', (_req, res): void => {
   const logs = getDb().prepare(
     'SELECT * FROM notification_log ORDER BY created_at DESC LIMIT 100'
   ).all();

@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import path from 'path';
-import { getDb, type Repository } from '../db/index.js';
+import { getDb, type Repository } from '../db';
 import { requireAuth } from '../middleware/auth.js';
 import { validate, snapshotIdSchema } from '../middleware/validate.js';
 import { decrypt } from '../services/crypto.js';
 import { listFiles, streamFile, streamDirectory } from '../services/restic.js';
+import type { Database } from 'better-sqlite3';
 
-const router = Router({ mergeParams: true });
+const router: Router = Router({ mergeParams: true });
 router.use(requireAuth);
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -18,8 +19,8 @@ const snapshotParamsSchema = z.object({ snapshotId: snapshotIdSchema });
 
 function canAccessRepo(userId: number, role: string, repoId: string | number): boolean {
   if (role === 'admin') return true;
-  const db = getDb();
-  const numericId = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
+  const db: Database = getDb();
+  const numericId: number = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
   return !!db.prepare(
     'SELECT 1 FROM user_repo_permissions WHERE user_id = ? AND repo_id = ?'
   ).get(userId, numericId);
@@ -30,9 +31,9 @@ function getRepoAndPassword(
   userId: number,
   role: string
 ): { repo: Repository; password: string | undefined } | null {
-  const numericRepoId = parseInt(repoId, 10);
+  const numericRepoId: number = parseInt(repoId, 10);
   if (!canAccessRepo(userId, role, numericRepoId)) return null;
-  const db = getDb();
+  const db: Database = getDb();
   const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(numericRepoId) as Repository | undefined;
   if (!repo) return null;
 
@@ -60,7 +61,7 @@ function decodePath(raw: string | undefined): string | null {
     !decoded.startsWith('/') ||
     decoded.includes('\0') ||
     decoded.split('/').includes('..') ||
-    decoded.split('/').some(seg => seg === '.')
+    decoded.split('/').some((seg: string): boolean => seg === '.')
   ) return null;
   return decoded;
 }
@@ -69,9 +70,9 @@ function decodePath(raw: string | undefined): string | null {
 
 router.get('/:snapshotId/ls',
   validate(snapshotParamsSchema, 'params'),
-  async (req: import('express').Request<{ repoId: string; snapshotId: string }>, res) => {
+  async (req: import('express').Request<{ repoId: string; snapshotId: string }>, res): Promise<void> => {
     const { repoId, snapshotId } = req.params;
-    const dirPath = (req.query.path as string) || '/';
+    const dirPath: string = (req.query.path as string) || '/';
 
     const validPath = decodePath(dirPath);
     if (!validPath) {
@@ -94,7 +95,7 @@ router.get('/:snapshotId/ls',
       );
       res.json({ snapshot, nodes, path: validPath });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg: string = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
     }
   }
@@ -104,7 +105,7 @@ router.get('/:snapshotId/ls',
 
 router.get('/:snapshotId/download',
   validate(snapshotParamsSchema, 'params'),
-  (req: import('express').Request<{ repoId: string; snapshotId: string }>, res) => {
+  (req: import('express').Request<{ repoId: string; snapshotId: string }>, res): void => {
     const { repoId, snapshotId } = req.params;
     const filePath = decodePath(req.query.path as string);
 
@@ -119,7 +120,7 @@ router.get('/:snapshotId/download',
       return;
     }
 
-    const filename = path.basename(filePath);
+    const filename: string = path.basename(filePath);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Type', 'application/octet-stream');
 
@@ -131,7 +132,7 @@ router.get('/:snapshotId/download',
 
 router.get('/:snapshotId/download-dir',
   validate(snapshotParamsSchema, 'params'),
-  (req: import('express').Request<{ repoId: string; snapshotId: string }>, res) => {
+  (req: import('express').Request<{ repoId: string; snapshotId: string }>, res): void => {
     const { repoId, snapshotId } = req.params;
     const dirPath = decodePath(req.query.path as string);
 
@@ -146,7 +147,7 @@ router.get('/:snapshotId/download-dir',
       return;
     }
 
-    const dirname = path.basename(dirPath) || 'archive';
+    const dirname: string = path.basename(dirPath) || 'archive';
     res.setHeader('Content-Disposition', `attachment; filename="${dirname}.tar"`);
     res.setHeader('Content-Type', 'application/x-tar');
 

@@ -332,6 +332,26 @@
       showDeleteRepoModal = false;
     }
   }
+
+  function fmtCount(v: number | null): string {
+    return v !== null ? v.toLocaleString() : '?';
+  }
+
+  function weekdayValues(obj: Record<string, number>): number[] {
+    return Object.values(obj);
+  }
+
+  function weekdayCount(obj: Record<string, number>, i: number): number {
+    return obj[i] ?? 0;
+  }
+
+  function hourValues(obj: Record<string, number>): number[] {
+    return Object.values(obj);
+  }
+
+  function hourCount(obj: Record<string, number>, h: number): number {
+    return obj[h] ?? 0;
+  }
 </script>
 
 {#if loading}
@@ -605,7 +625,6 @@
                       </div>
 
                       {#if statsObj}
-                        {@const fmtCount = (v: number | null) => v !== null ? v.toLocaleString() : '?'}
                         <!-- Stats grid -->
                         <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">
                           <div class="bg-gray-900 rounded-lg px-3 py-2">
@@ -790,12 +809,12 @@
           <!-- Row 3: Weekday heatmap -->
           {#if repoStats.backup_by_weekday}
             {@const days = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']}
-            {@const maxDay = Math.max(...Object.values(repoStats.backup_by_weekday as Record<string, number>), 1)}
+            {@const maxDay = Math.max(...weekdayValues(repoStats.backup_by_weekday), 1)}
             <div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-4">
               <p class="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Backups nach Wochentag</p>
               <div class="grid grid-cols-7 gap-2">
                 {#each days as day, i}
-                  {@const count = (repoStats.backup_by_weekday as Record<string, number>)[i] ?? 0}
+                  {@const count = weekdayCount(repoStats.backup_by_weekday, i)}
                   {@const pct = Math.round((count / maxDay) * 100)}
                   <div class="flex flex-col items-center gap-1.5">
                     <div class="w-full bg-gray-800 rounded-lg overflow-hidden" style="height: 48px;">
@@ -814,12 +833,12 @@
 
           <!-- Row 4: Hour heatmap -->
           {#if repoStats.backup_by_hour}
-            {@const maxHour = Math.max(...Object.values(repoStats.backup_by_hour as Record<string, number>), 1)}
+            {@const maxHour = Math.max(...hourValues(repoStats.backup_by_hour), 1)}
             <div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-4">
               <p class="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Backups nach Uhrzeit</p>
               <div class="grid grid-cols-24 gap-px" style="grid-template-columns: repeat(24, minmax(0, 1fr));">
                 {#each Array.from({length: 24}, (_, i) => i) as hour}
-                  {@const count = (repoStats.backup_by_hour as Record<string, number>)[hour] ?? 0}
+                  {@const count = hourCount(repoStats.backup_by_hour, hour)}
                   {@const pct = Math.round((count / maxHour) * 100)}
                   {@const intensity = pct === 0 ? 'bg-gray-800' : pct < 25 ? 'bg-blue-900/60' : pct < 50 ? 'bg-blue-700/70' : pct < 75 ? 'bg-blue-500/80' : 'bg-blue-400'}
                   <div class="flex flex-col items-center gap-1" title="{hour}:00 — {count} Snapshots">

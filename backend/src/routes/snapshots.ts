@@ -1,14 +1,15 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { getDb, type Repository, type Snapshot } from '../db/index.js';
+import { getDb, type Repository, type Snapshot } from '../db';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
-import { validate, numericIdSchema, snapshotIdSchema } from '../middleware/validate.js';
+import { validate, snapshotIdSchema } from '../middleware/validate.js';
 import { decrypt } from '../services/crypto.js';
 import { deleteSnapshots } from '../services/restic.js';
 import { indexRepo } from '../services/indexer.js';
 import { auditLog } from '../services/audit.js';
+import type { Database } from 'better-sqlite3';
 
-const router = Router({ mergeParams: true });
+const router: Router = Router({ mergeParams: true });
 router.use(requireAuth);
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -24,8 +25,8 @@ const deleteSnapshotsSchema = z.object({
 
 function canAccessRepo(userId: number, role: string, repoId: string | number): boolean {
   if (role === 'admin') return true;
-  const db = getDb();
-  const numericId = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
+  const db: Database = getDb();
+  const numericId: number = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
   return !!db.prepare(
     'SELECT 1 FROM user_repo_permissions WHERE user_id = ? AND repo_id = ?'
   ).get(userId, numericId);
@@ -33,10 +34,10 @@ function canAccessRepo(userId: number, role: string, repoId: string | number): b
 
 // ── GET /api/repos/:repoId/snapshots ─────────────────────────────────────────
 
-router.get('/', (req: import('express').Request<{ repoId: string }>, res) => {
-  const db = getDb();
+router.get('/', (req: import('express').Request<{ repoId: string }>, res): void => {
+  const db: Database = getDb();
   const { repoId } = req.params;
-  const numericRepoId = parseInt(repoId, 10);
+  const numericRepoId: number = parseInt(repoId, 10);
 
   if (!canAccessRepo(req.user!.userId, req.user!.role, numericRepoId)) {
     res.status(404).json({ error: 'Repository not found' });
@@ -71,10 +72,10 @@ router.get('/', (req: import('express').Request<{ repoId: string }>, res) => {
 // ── DELETE /api/repos/:repoId/snapshots — admin only ─────────────────────────
 
 router.delete('/', requireAdmin, validate(deleteSnapshotsSchema),
-  async (req: import('express').Request<{ repoId: string }>, res) => {
-    const db = getDb();
+  async (req: import('express').Request<{ repoId: string }>, res): Promise<void> => {
+    const db: Database = getDb();
     const { repoId } = req.params;
-    const numericRepoId = parseInt(repoId, 10);
+    const numericRepoId: number = parseInt(repoId, 10);
     const { ids } = req.body as z.infer<typeof deleteSnapshotsSchema>;
 
     const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(numericRepoId) as Repository | undefined;
@@ -100,7 +101,7 @@ router.delete('/', requireAdmin, validate(deleteSnapshotsSchema),
       auditLog({ eventType: 'snapshots_deleted', req, username: req.user!.username, details: { repoId, repoName: repo.name, count: ids.length, ids } });
       res.json({ ok: true, deleted: ids.length });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg: string = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
     }
   }

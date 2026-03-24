@@ -36,7 +36,7 @@ const CARD_STYLE = `
 function baseLayout(content: string, title: string): string {
   return `
 <!DOCTYPE html>
-<html>
+<html lang="de">
 <head><meta charset="utf-8"><title>${title}</title></head>
 <body style="${BASE_STYLE}">
   <div style="max-width: 600px; margin: 0 auto; padding: 32px 16px;">
@@ -60,7 +60,7 @@ function baseLayout(content: string, title: string): string {
 
 export function backupFailedTemplate(data: BackupFailedData): { subject: string; html: string; text: string } {
   const subject = `❌ Backup fehlgeschlagen: ${data.repoName}`;
-  const html = baseLayout(`
+  const html: string = baseLayout(`
     <div style="${CARD_STYLE} border-color: rgba(239,68,68,0.3);">
       <div style="color: #f87171; font-size: 14px; font-weight: 600; margin-bottom: 8px;">
         Backup fehlgeschlagen
@@ -84,7 +84,7 @@ export function backupFailedTemplate(data: BackupFailedData): { subject: string;
 
 export function agentDisconnectedTemplate(data: { sourceName: string; hostname: string; lastSeen: Date }): { subject: string; html: string; text: string } {
   const subject = `⚠️ Agent getrennt: ${data.sourceName}`;
-  const html = baseLayout(`
+  const html: string = baseLayout(`
     <div style="${CARD_STYLE} border-color: rgba(234,179,8,0.3);">
       <div style="color: #fbbf24; font-size: 14px; font-weight: 600; margin-bottom: 8px;">Agent nicht erreichbar</div>
       <h2 style="color: #fff; margin: 0 0 16px;">${data.sourceName}</h2>
@@ -103,7 +103,7 @@ export function agentDisconnectedTemplate(data: { sourceName: string; hostname: 
 export function auditDigestTemplate(data: AuditDigestData): { subject: string; html: string; text: string } {
   const subject = `📊 ResticVault ${data.period === 'weekly' ? 'Wochen' : 'Monats'}bericht: ${data.periodLabel}`;
 
-  const repoRows = data.repos.map(r => `
+  const repoRows: string = data.repos.map(r => `
     <tr>
       <td style="padding: 8px 12px; color: #d1d5db;">${r.name}</td>
       <td style="padding: 8px 12px; color: #9ca3af; text-align: center;">${r.snapshotCount}</td>
@@ -118,7 +118,7 @@ export function auditDigestTemplate(data: AuditDigestData): { subject: string; h
     </tr>
   `).join('');
 
-  const statCards = [
+  const statCards: string = [
     { label: 'Backups gesamt',  value: data.totalBackups,   color: '#60a5fa' },
     { label: 'Fehlgeschlagen',  value: data.failedBackups,  color: data.failedBackups > 0 ? '#f87171' : '#34d399' },
     { label: 'Snapshots',       value: data.totalSnapshots, color: '#a78bfa' },
@@ -129,7 +129,7 @@ export function auditDigestTemplate(data: AuditDigestData): { subject: string; h
     </div>
   `).join('');
 
-  const html = baseLayout(`
+  const html: string = baseLayout(`
     <h2 style="color: #fff; margin: 0 0 8px;">${data.period === 'weekly' ? 'Wochenbericht' : 'Monatsbericht'}</h2>
     <p style="color: #6b7280; margin: 0 0 24px; font-size: 14px;">${data.periodLabel}</p>
     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px;">
@@ -170,7 +170,7 @@ export function auditDigestTemplate(data: AuditDigestData): { subject: string; h
 
 export function loginFailureAlertTemplate(data: { username: string; ip: string; attempts: number; timestamp: Date }): { subject: string; html: string; text: string } {
   const subject = `🔐 Verdächtige Anmeldeversuche erkannt`;
-  const html = baseLayout(`
+  const html: string = baseLayout(`
     <div style="${CARD_STYLE} border-color: rgba(234,179,8,0.3);">
       <div style="color: #fbbf24; font-size: 14px; font-weight: 600; margin-bottom: 16px;">
         Mehrere fehlgeschlagene Anmeldeversuche

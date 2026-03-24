@@ -386,7 +386,7 @@
                   {newToken}
                 </div>
                 <button
-                  onclick={() => copyText(newToken!)}
+                  onclick={() => newToken && copyText(newToken)}
                   class="flex items-center gap-2 text-sm py-2 px-4 rounded-lg
                          {copied ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'} transition-colors"
                 >
@@ -449,7 +449,7 @@
             <div class="bg-gray-950 rounded-xl p-4 font-mono text-xs text-gray-200 border border-gray-700/50 relative">
               <pre class="whitespace-pre-wrap break-all">{installCommand(
                 typeof window !== 'undefined' ? window.location.origin : 'https://your-host',
-                '&lt;your-token&gt;',
+                '<your-token>',
                 source.name
               )}</pre>
             </div>

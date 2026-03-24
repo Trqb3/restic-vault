@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# ── Agent version (single source of truth — server parses this at startup) ──
+AGENT_VERSION="1.2.1"
 # ResticVault Agent Installer
 # Usage: curl -fsSL https://<your-host>/agent-install.sh | bash -s -- \
 #          --server https://your-resticvault-host \
@@ -93,6 +95,7 @@ RV_TOKEN="${RV_TOKEN}"
 RV_NAME="${RV_NAME}"
 RV_PATHS="${RV_PATHS}"
 RESTIC_BIN="${RESTIC_BIN}"
+AGENT_VERSION="${AGENT_VERSION}"
 EOF
 chmod 600 "$CONFIG_FILE"
 echo "Config written to $CONFIG_FILE"
@@ -381,9 +384,9 @@ run_update() {
 
 # ── Main: heartbeat + command poll loop ──────────────────────────────────────
 run_daemon() {
-  log "Agent starting. Connecting to ${RV_SERVER} as '${RV_NAME}' ..."
+  log "Agent starting (v${AGENT_VERSION}). Connecting to ${RV_SERVER} as '${RV_NAME}' ..."
 
-  AGENT_VERSION="1.1.5"
+  # AGENT_VERSION comes from the sourced config file (written by the installer)
   local hb
   hb=$(printf '{"agentVersion":"%s"}' "$AGENT_VERSION")
   rv_post heartbeat "$hb"

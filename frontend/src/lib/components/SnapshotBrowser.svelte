@@ -141,6 +141,7 @@
         </div>
         <button
                 onclick={onclose}
+                aria-label="Schließen"
                 class="p-1.5 text-gray-500 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

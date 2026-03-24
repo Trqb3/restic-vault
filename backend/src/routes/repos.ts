@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { getDb, type Repository, type RepoStatsRow } from '../db/index.js';
+import { getDb, type Repository, type RepoStatsRow } from '../db';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { validate, idParamsSchema } from '../middleware/validate.js';
 import { encrypt, decrypt } from '../services/crypto.js';
@@ -8,8 +8,9 @@ import { indexRepo, scanBaseDir } from '../services/indexer.js';
 import { getRepoStats } from '../services/restic.js';
 import { sshContextForRepo } from '../services/ssh.js';
 import { auditLog } from '../services/audit.js';
+import type { Database, RunResult } from 'better-sqlite3';
 
-const router = Router();
+const router: Router = Router();
 router.use(requireAuth);
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -41,8 +42,8 @@ const patchRepoSchema = z.object({
 
 function canAccessRepo(userId: number, role: string, repoId: string | number): boolean {
   if (role === 'admin') return true;
-  const db = getDb();
-  const numericId = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
+  const db: Database = getDb();
+  const numericId: number = typeof repoId === 'string' ? parseInt(repoId, 10) : repoId;
   return !!db.prepare(
     'SELECT 1 FROM user_repo_permissions WHERE user_id = ? AND repo_id = ?'
   ).get(userId, numericId);
@@ -50,8 +51,8 @@ function canAccessRepo(userId: number, role: string, repoId: string | number): b
 
 // ── GET /api/repos — list all repos ──────────────────────────────────────────
 
-router.get('/', (req, res) => {
-  const db = getDb();
+router.get('/', (req, res): void => {
+  const db: Database = getDb();
   const { userId, role } = req.user!;
   let repos;
   if (role === 'admin') {
@@ -76,8 +77,8 @@ router.get('/', (req, res) => {
 
 // ── GET /api/repos/:id — get repo details ─────────────────────────────────────
 
-router.get('/:id', validate(idParamsSchema, 'params'), (req, res) => {
-  const db = getDb();
+router.get('/:id', validate(idParamsSchema, 'params'), (req, res): void => {
+  const db: Database = getDb();
   const repoId = req.params.id as string;
   if (!canAccessRepo(req.user!.userId, req.user!.role, repoId)) {
     res.status(404).json({ error: 'Repository not found' });
@@ -99,10 +100,10 @@ router.get('/:id', validate(idParamsSchema, 'params'), (req, res) => {
 
 // ── POST /api/repos — add a repo (admin only) ─────────────────────────────────
 
-router.post('/', requireAdmin, validate(createRepoSchema), (req, res) => {
+router.post('/', requireAdmin, validate(createRepoSchema), (req, res): void => {
   const { name, path: repoPath, type, password, connectionId } = req.body as z.infer<typeof createRepoSchema>;
 
-  const db = getDb();
+  const db: Database = getDb();
   let passwordEncrypted: string | null = null;
   if (password) {
     try {
@@ -114,7 +115,7 @@ router.post('/', requireAdmin, validate(createRepoSchema), (req, res) => {
   }
 
   try {
-    const result = db.prepare(`
+    const result: RunResult = db.prepare(`
       INSERT INTO repositories (name, path, type, password_encrypted, connection_id)
       VALUES (?, ?, ?, ?, ?)
     `).run(name, repoPath, type, passwordEncrypted, connectionId ?? null);
@@ -127,7 +128,7 @@ router.post('/', requireAdmin, validate(createRepoSchema), (req, res) => {
     auditLog({ eventType: 'repo_added', req, username: req.user!.username, details: { name, path: repoPath, type } });
     res.status(201).json({ id: result.lastInsertRowid, name, path: repoPath, type });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg: string = err instanceof Error ? err.message : String(err);
     if (msg.includes('UNIQUE constraint')) {
       res.status(409).json({ error: 'A repository with this path already exists' });
     } else {
@@ -138,8 +139,8 @@ router.post('/', requireAdmin, validate(createRepoSchema), (req, res) => {
 
 // ── PUT /api/repos/:id — update a repo (admin only) ──────────────────────────
 
-router.put('/:id', requireAdmin, validate(idParamsSchema, 'params'), validate(updateRepoSchema), (req, res) => {
-  const db = getDb();
+router.put('/:id', requireAdmin, validate(idParamsSchema, 'params'), validate(updateRepoSchema), (req, res): void => {
+  const db: Database = getDb();
   const existing = db.prepare('SELECT * FROM repositories WHERE id = ?').get(req.params.id) as Repository | undefined;
   if (!existing) {
     res.status(404).json({ error: 'Repository not found' });
@@ -169,10 +170,10 @@ router.put('/:id', requireAdmin, validate(idParamsSchema, 'params'), validate(up
 
 // ── DELETE /api/repos/:id — remove a repo (admin only) ───────────────────────
 
-router.delete('/:id', requireAdmin, validate(idParamsSchema, 'params'), (req, res) => {
-  const db = getDb();
+router.delete('/:id', requireAdmin, validate(idParamsSchema, 'params'), (req, res): void => {
+  const db: Database = getDb();
   const existing = db.prepare('SELECT name, path FROM repositories WHERE id = ?').get(req.params.id) as { name: string; path: string } | undefined;
-  const result = db.prepare('DELETE FROM repositories WHERE id = ?').run(req.params.id);
+  const result: RunResult = db.prepare('DELETE FROM repositories WHERE id = ?').run(req.params.id);
   if (result.changes === 0) {
     res.status(404).json({ error: 'Repository not found' });
     return;
@@ -183,8 +184,8 @@ router.delete('/:id', requireAdmin, validate(idParamsSchema, 'params'), (req, re
 
 // ── POST /api/repos/:id/refresh — re-index a specific repo (admin only) ───────
 
-router.post('/:id/refresh', requireAdmin, validate(idParamsSchema, 'params'), async (req, res) => {
-  const db = getDb();
+router.post('/:id/refresh', requireAdmin, validate(idParamsSchema, 'params'), async (req, res): Promise<void> => {
+  const db: Database = getDb();
   const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(req.params.id) as Repository | undefined;
   if (!repo) {
     res.status(404).json({ error: 'Repository not found' });
@@ -200,7 +201,7 @@ router.post('/:id/refresh', requireAdmin, validate(idParamsSchema, 'params'), as
     `).get(repo.id);
     res.json(updated);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg: string = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });
   }
 });
@@ -208,8 +209,8 @@ router.post('/:id/refresh', requireAdmin, validate(idParamsSchema, 'params'), as
 // ── POST /api/repos/scan — scan base dir for new repos (admin only) ───────────
 //  Note: must be registered BEFORE /:id routes to avoid being caught as an id.
 
-router.post('/scan', requireAdmin, async (_req, res) => {
-  const db = getDb();
+router.post('/scan', requireAdmin, async (_req, res): Promise<void> => {
+  const db: Database = getDb();
   const setting = db.prepare("SELECT value FROM settings WHERE key = 'base_dir'").get() as { value: string } | undefined;
   const baseDir = setting?.value || process.env.REPO_BASE_DIR;
 
@@ -219,12 +220,12 @@ router.post('/scan', requireAdmin, async (_req, res) => {
   }
 
   try {
-    const paths = await scanBaseDir(baseDir);
+    const paths: string[] = await scanBaseDir(baseDir);
     const added: string[] = [];
 
     for (const repoPath of paths) {
       try {
-        const result = db.prepare(`
+        const result: RunResult = db.prepare(`
           INSERT OR IGNORE INTO repositories (name, path, type)
           VALUES (?, ?, 'local')
         `).run(repoPath.split('/').pop() || repoPath, repoPath);
@@ -241,7 +242,7 @@ router.post('/scan', requireAdmin, async (_req, res) => {
 
     res.json({ found: paths.length, added: added.length, newPaths: added });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg: string = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });
   }
 });
@@ -256,7 +257,7 @@ interface SnapshotDistributions {
 }
 
 function computeSnapshotDistributions(repoId: string | number): SnapshotDistributions {
-  const db = getDb();
+  const db: Database = getDb();
 
   const { avg_snapshot_size } = db.prepare(`
     SELECT CAST(AVG(restore_size) AS INTEGER) as avg_snapshot_size
@@ -285,11 +286,11 @@ function computeSnapshotDistributions(repoId: string | number): SnapshotDistribu
   `).all(repoId) as { hour: number; cnt: number }[];
 
   const backup_by_weekday: Record<number, number> = {};
-  for (let i = 0; i <= 6; i++) backup_by_weekday[i] = 0;
+  for (let i: number = 0; i <= 6; i++) backup_by_weekday[i] = 0;
   for (const { dow, cnt } of weekdayRows) backup_by_weekday[dow] = cnt;
 
   const backup_by_hour: Record<number, number> = {};
-  for (let i = 0; i <= 23; i++) backup_by_hour[i] = 0;
+  for (let i: number = 0; i <= 23; i++) backup_by_hour[i] = 0;
   for (const { hour, cnt } of hourRows) backup_by_hour[hour] = cnt;
 
   return { avg_snapshot_size, avg_interval_seconds, backup_by_weekday, backup_by_hour };
@@ -297,12 +298,12 @@ function computeSnapshotDistributions(repoId: string | number): SnapshotDistribu
 
 // ── GET /api/repos/:id/stats — repo-level stats ───────────────────────────────
 
-router.get('/:id/stats', validate(idParamsSchema, 'params'), async (req, res) => {
+router.get('/:id/stats', validate(idParamsSchema, 'params'), async (req, res): Promise<void> => {
   const repoId = req.params.id as string;
   if (!canAccessRepo(req.user!.userId, req.user!.role, repoId)) {
     res.status(404).json({ error: 'Repository not found' }); return;
   }
-  const db = getDb();
+  const db: Database = getDb();
   const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(repoId) as Repository | undefined;
   if (!repo) { res.status(404).json({ error: 'Repository not found' }); return; }
 
@@ -311,7 +312,7 @@ router.get('/:id/stats', validate(idParamsSchema, 'params'), async (req, res) =>
   if (cached) {
     let tags: string[] = [];
     try { tags = JSON.parse(cached.tags ?? '[]') as string[]; } catch { /* empty */ }
-    const dist = computeSnapshotDistributions(repo.id);
+    const dist: SnapshotDistributions = computeSnapshotDistributions(repo.id);
     res.json({
       total_restore_size: cached.total_restore_size,
       total_file_count: cached.total_file_count,
@@ -347,7 +348,7 @@ router.get('/:id/stats', validate(idParamsSchema, 'params'), async (req, res) =>
 
   const sshCtx = await sshContextForRepo(repo.connection_id).catch(() => null);
   try {
-    const sshArgs = sshCtx?.extraArgs ?? [];
+    const sshArgs: string[] = sshCtx?.extraArgs ?? [];
     const [restoreStats, rawStats] = await Promise.all([
       getRepoStats(repo.path, password, undefined, sshArgs),
       getRepoStats(repo.path, password, 'raw-data', sshArgs),
@@ -355,10 +356,10 @@ router.get('/:id/stats', validate(idParamsSchema, 'params'), async (req, res) =>
     const tagSet = new Set<string>();
     if (meta.all_tags) {
       for (const chunk of meta.all_tags.split(',')) {
-        try { (JSON.parse(chunk) as string[]).forEach(t => tagSet.add(t)); } catch { /* skip */ }
+        try { (JSON.parse(chunk) as string[]).forEach((t: string): Set<string> => tagSet.add(t)); } catch { /* skip */ }
       }
     }
-    const dist = computeSnapshotDistributions(repoId);
+    const dist: SnapshotDistributions = computeSnapshotDistributions(repoId);
     res.json({
       total_restore_size: restoreStats.total_size,
       total_file_count: restoreStats.total_file_count,
@@ -374,7 +375,7 @@ router.get('/:id/stats', validate(idParamsSchema, 'params'), async (req, res) =>
       ...dist,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg: string = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });
   } finally {
     sshCtx?.cleanup();
@@ -383,20 +384,20 @@ router.get('/:id/stats', validate(idParamsSchema, 'params'), async (req, res) =>
 
 // ── GET /api/repos/:id/size-history — deduplicated size over time ─────────────
 
-router.get('/:id/size-history', validate(idParamsSchema, 'params'), (req, res) => {
+router.get('/:id/size-history', validate(idParamsSchema, 'params'), (req, res): void => {
   const repoId = req.params.id as string;
   if (!canAccessRepo(req.user!.userId, req.user!.role, repoId)) {
     res.status(404).json({ error: 'Repository not found' });
     return;
   }
-  const db = getDb();
-  const days = Math.min(parseInt(req.query['days'] as string) || 90, 365);
-  const since = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
+  const db: Database = getDb();
+  const days: number = Math.min(parseInt(req.query['days'] as string) || 90, 365);
+  const since: number = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
   const history = db.prepare(`
     SELECT recorded_at, deduplicated_size, total_restore_size, snapshot_count
     FROM repo_size_history
     WHERE repo_id = ? AND recorded_at > ?
-    ORDER BY recorded_at ASC
+    ORDER BY recorded_at
   `).all(repoId, since) as Array<{
     recorded_at: number;
     deduplicated_size: number;
@@ -408,8 +409,8 @@ router.get('/:id/size-history', validate(idParamsSchema, 'params'), (req, res) =
 
 // ── PATCH /api/repos/:id — partial update (admin only) ───────────────────────
 
-router.patch('/:id', requireAdmin, validate(idParamsSchema, 'params'), validate(patchRepoSchema), (req, res) => {
-  const db = getDb();
+router.patch('/:id', requireAdmin, validate(idParamsSchema, 'params'), validate(patchRepoSchema), (req, res): void => {
+  const db: Database = getDb();
   const existing = db.prepare('SELECT * FROM repositories WHERE id = ?').get(req.params.id) as Repository | undefined;
   if (!existing) { res.status(404).json({ error: 'Repository not found' }); return; }
 

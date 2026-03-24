@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import http from 'http';
 import bcrypt from 'bcrypt';
-import { getDb } from './db/index.js';
+import { getDb } from './db';
 import { startIndexer, indexAllRepos, backfillSizeHistory } from './services/indexer.js';
 import { auditLog } from './services/audit.js';
 import cron from 'node-cron';
@@ -22,10 +22,9 @@ import notificationsRouter from './routes/notifications.js';
 import backupSourcesRouter from './routes/backup-sources.js';
 import exclusionProfilesRouter from './routes/exclusion-profiles.js';
 import { startNotificationScheduler } from './services/notifications.js';
-import { startRestServer, stopRestServer, isRunning, REST_SERVER_PORT, getSourcesDir } from './services/rest-server.js';
+import { startRestServer, isRunning, REST_SERVER_PORT } from './services/rest-server.js';
 import { getCachedAuth, cacheAuthResult, verifyToken } from './services/token.js';
-import type { User } from './db/index.js';
-import type { BackupSource } from './db/index.js';
+import type { BackupSource } from './db';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -90,7 +89,7 @@ const resticLimiter = rateLimit({
   max: 2000,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.headers.authorization ?? req.ip ?? 'unknown',
+  keyGenerator: (req) => req.headers.authorization ?? ipKeyGenerator(req.ip ?? 'unknown'),
   message: { error: 'Restic rate limit exceeded' },
   skip: () => !isRunning(),
 });
@@ -124,7 +123,7 @@ const agentProgressLimiter = rateLimit({
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.headers.authorization ?? req.ip ?? 'unknown',
+  keyGenerator: (req) => req.headers.authorization ?? ipKeyGenerator(req.ip ?? 'unknown'),
   message: { error: 'Progress update rate limit exceeded' },
 });
 app.use('/api/sources/agent/backup-progress', agentProgressLimiter);

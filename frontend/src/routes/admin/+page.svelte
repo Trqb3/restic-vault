@@ -123,6 +123,28 @@
     smtp: 'SMTP', sendgrid: 'SendGrid', mailgun: 'Mailgun', resend: 'Resend', ses: 'AWS SES',
   };
 
+  const tabs = [
+    ['users', 'Users'],
+    ['permissions', 'Permissions'],
+    ['ssh', 'SSH Connections'],
+    ['settings', 'Einstellungen'],
+    ['logs', 'Audit Logs'],
+    ['notifications', 'Benachrichtigungen'],
+    ['exclusions', 'Exclusion Profiles'],
+  ] as const;
+
+  const notifInnerTabs = [
+    ['providers', 'Anbieter'],
+    ['rules', 'Regeln'],
+    ['log', 'Protokoll'],
+  ] as const;
+
+  const triggerOptions = [
+    ['event', 'Event-basiert'],
+    ['schedule', 'Geplant'],
+  ] as const;
+
+
   async function loadNotifications() {
     notifLoading = true;
     try {
@@ -616,6 +638,15 @@
     epName = ''; epDescription = ''; epPatterns = '';
     showAddProfileModal = true;
   }
+
+
+  function parseRecipients(s: string): string[] {
+    return JSON.parse(s);
+  }
+
+  function parsePatterns(s: string): string[] {
+    try { return JSON.parse(s); } catch { return []; }
+  }
 </script>
 
 {#if loading}
@@ -644,7 +675,7 @@
 
     <!-- Tabs -->
     <div class="flex gap-1 p-1 bg-gray-900 border border-gray-800 rounded-xl w-fit">
-      {#each ([['users', 'Users'], ['permissions', 'Permissions'], ['ssh', 'SSH Connections'], ['settings', 'Einstellungen'], ['logs', 'Audit Logs'], ['notifications', 'Benachrichtigungen'], ['exclusions', 'Exclusion Profiles']] as const) as [key, label]}
+      {#each tabs as [key, label]}
         <button
                 onclick={() => { activeTab = key; if (key === 'logs' && auditLogs.length === 0) loadAuditLogs(0); if (key === 'notifications' && notifProviders.length === 0) loadNotifications(); if (key === 'exclusions' && exclusionProfilesList.length === 0) loadExclusionProfiles(); }}
                 class="px-4 py-1.5 text-sm font-medium rounded-lg transition-all duration-150
@@ -1123,7 +1154,7 @@
       <div class="space-y-4">
         <!-- Inner tabs -->
         <div class="flex gap-1 p-0.5 bg-gray-800 rounded-lg w-fit">
-          {#each ([['providers', 'Anbieter'], ['rules', 'Regeln'], ['log', 'Protokoll']] as const) as [k, lbl]}
+          {#each notifInnerTabs as [k, lbl]}
             <button
               type="button"
               onclick={() => notifInnerTab = k}
@@ -1264,7 +1295,7 @@
                 </thead>
                 <tbody class="divide-y divide-gray-800/60">
                   {#each notifRules as rule (rule.id)}
-                    {@const recipients = JSON.parse(rule.recipients) as string[]}
+                    {@const recipients = parseRecipients(rule.recipients)}
                     <tr class="hover:bg-gray-800/20 transition-colors">
                       <td class="px-5 py-3.5 text-white font-medium">{rule.name}</td>
                       <td class="px-5 py-3.5">
@@ -1323,7 +1354,7 @@
                 </thead>
                 <tbody class="divide-y divide-gray-800/60">
                   {#each notifLog as entry (entry.id)}
-                    {@const rcpt = JSON.parse(entry.recipients) as string[]}
+                    {@const rcpt = parseRecipients(entry.recipients)}
                     <tr class="hover:bg-gray-800/20 transition-colors">
                       <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap font-mono">{formatDateTime(entry.created_at)}</td>
                       <td class="px-4 py-3 text-gray-300 text-xs max-w-xs truncate">{entry.subject}</td>
@@ -1380,7 +1411,7 @@
         {:else}
           <div class="space-y-3">
             {#each exclusionProfilesList as profile (profile.id)}
-              {@const patterns = (() => { try { return JSON.parse(profile.patterns) as string[]; } catch { return []; } })()}
+              {@const patterns = parsePatterns(profile.patterns)}
               <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
                 <div class="flex items-start justify-between gap-4">
                   <div class="min-w-0 flex-1">
@@ -1810,7 +1841,7 @@
       <div>
         <label class="block text-xs font-medium text-gray-400 mb-1.5">Auslöser</label>
         <div class="flex gap-2">
-          {#each ([['event', 'Event-basiert'], ['schedule', 'Geplant']] as const) as [v, lbl]}
+          {#each triggerOptions as [v, lbl]}
             <button type="button"
               onclick={() => newRuleTrigger = v}
               class="flex-1 py-2 text-sm rounded-lg border transition-colors

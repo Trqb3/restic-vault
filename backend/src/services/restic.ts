@@ -268,23 +268,6 @@ export async function deleteSnapshots(
   );
 }
 
-export async function checkRepo(
-  repoPath: string,
-  password?: string
-): Promise<boolean> {
-  try {
-    const { env, implicitArgs } = buildEnv(repoPath, password);
-    await execFileAsync(RESTIC_BIN, [...implicitArgs, 'snapshots', '--json', '--no-lock', '--no-cache'], {
-      env,
-      maxBuffer: 1024 * 1024,
-      timeout: 30_000,  // quick check — 30s is plenty
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // ── Repo & Snapshot Stats ─────────────────────────────────────────────────────
 
 export interface ResticStats {
@@ -489,7 +472,7 @@ export async function getSnapshotDiff(
   if (hasJsonLines) {
     let filesNew: number;
     let filesChanged: number;
-    let filesUnmodified: number | null = null;
+    let filesUnmodified: number | null;
 
     if (filesChangedDirect > 0 || summaryFilesChanged !== null) {
       // restic 0.17+: explicit 'modified' lines or summary with 'changed' counts — use them

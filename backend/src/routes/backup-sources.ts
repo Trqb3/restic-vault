@@ -1,7 +1,8 @@
-import { Router, type Request, type Response } from 'express';
+import {Router, type Request, type Response, NextFunction} from 'express';
 import path from 'path';
+import fs from 'fs';
 import { z } from 'zod';
-import { getDb } from '../db/index.js';
+import { getDb } from '../db';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { generateToken, verifyToken, cacheAuthResult, getCachedAuth, evictSourceFromCache } from '../services/token.js';
@@ -9,21 +10,32 @@ import { ensureSourceDir, getSourcesDir } from '../services/rest-server.js';
 import { auditLog } from '../services/audit.js';
 import { fireNotificationEvent } from '../services/notifications.js';
 import { indexRepo } from '../services/indexer.js';
-import type { BackupSource, AgentCommand, SourceExclusionRule, Repository } from '../db/index.js';
+import type { BackupSource, AgentCommand, SourceExclusionRule, Repository } from '../db';
+import type { Database } from 'better-sqlite3';
 
-const router = Router();
+const router: Router = Router();
 
-// Current agent version bundled with this server build.
-// Bump this whenever agent-install.sh daemon logic changes.
-const CURRENT_AGENT_VERSION = '1.1.5';
+// Parse agent version from agent-install.sh (single source of truth).
+// The script has AGENT_VERSION="x.y.z" near the top.
+function readAgentVersion(): string {
+  try {
+    const scriptPath: string = path.join(__dirname, '..', '..', 'public', 'agent-install.sh');
+    const head: string = fs.readFileSync(scriptPath, 'utf8').slice(0, 500);
+    const match = head.match(/^AGENT_VERSION="([^"]+)"/m);
+    if (match?.[1]) return match[1];
+  } catch { /* fallback below */ }
+  return '0.0.0';
+}
+const CURRENT_AGENT_VERSION: string = readAgentVersion();
+console.log(`[sources] Agent version from agent-install.sh: ${CURRENT_AGENT_VERSION}`);
 
 /** GET /api/sources/agent/version — public (no auth), used by agent to check for updates */
-router.get('/agent/version', (_req, res) => {
+router.get('/agent/version', (_req, res): void => {
   res.json({ version: CURRENT_AGENT_VERSION });
 });
 
 /** GET /api/sources/current-agent-version — admin only, used by UI */
-router.get('/current-agent-version', requireAuth, (_req, res) => {
+router.get('/current-agent-version', requireAuth, (_req, res): void => {
   res.json({ version: CURRENT_AGENT_VERSION });
 });
 
@@ -75,7 +87,7 @@ const backupProgressSchema = z.object({
   filesDone:   z.number().int().nonnegative(),
   totalBytes:  z.number().int().nonnegative(),
   bytesDone:   z.number().int().nonnegative(),
-  currentFile: z.string().max(4096).transform(s => s.replace(/[\x00-\x1f\x7f]/g, '')).optional(),
+  currentFile: z.string().max(4096).transform((s: string): string => s.replace(/[\x00-\x1f\x7f]/g, '')).optional(),
 });
 
 interface BackupProgress {
@@ -91,8 +103,8 @@ interface BackupProgress {
 const progressStore = new Map<number, BackupProgress>();
 
 // Clean up stale progress entries every 5 minutes
-setInterval(() => {
-  const now = Date.now();
+setInterval((): void => {
+  const now: number = Date.now();
   for (const [id, p] of progressStore) {
     if (now - p.updatedAt > 300_000) progressStore.delete(id);
   }
@@ -111,7 +123,7 @@ function canAccessSource(userId: number, role: string, sourceId: number): boolea
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
 /** GET /api/sources  — admin sees all; viewer sees only sources linked to their permitted repos */
-router.get('/', requireAuth, (req, res) => {
+router.get('/', requireAuth, (req, res): void => {
   const user = (req as Request & { user: { userId: number; role: string } }).user;
   if (user.role === 'admin') {
     const rows = getDb().prepare(`
@@ -134,9 +146,9 @@ router.get('/', requireAuth, (req, res) => {
 });
 
 /** GET /api/sources/:id */
-router.get('/:id', requireAuth, (req, res) => {
+router.get('/:id', requireAuth, (req, res): void => {
   const user = (req as Request & { user: { userId: number; role: string } }).user;
-  const id = parseInt(req.params.id as string, 10);
+  const id: number = parseInt(req.params.id as string, 10);
   if (!canAccessSource(user.userId, user.role, id)) {
     res.status(403).json({ error: 'Forbidden' }); return;
   }
@@ -151,9 +163,9 @@ router.get('/:id', requireAuth, (req, res) => {
 });
 
 /** POST /api/sources  — create new source, returns raw token (shown once) */
-router.post('/', requireAuth, requireAdmin, validate(createSourceSchema), async (req, res) => {
+router.post('/', requireAuth, requireAdmin, validate(createSourceSchema), async (req, res): Promise<void> => {
   const { name, description } = req.body as z.infer<typeof createSourceSchema>;
-  const db = getDb();
+  const db: Database = getDb();
 
   // Check name uniqueness
   if (db.prepare('SELECT 1 FROM backup_sources WHERE name = ?').get(name)) {
@@ -176,7 +188,7 @@ router.post('/', requireAuth, requireAdmin, validate(createSourceSchema), async 
     VALUES (?, ?, ?)
   `).run(name, description ?? null, hash);
 
-  const id = Number(result.lastInsertRowid);
+  const id: number = Number(result.lastInsertRowid);
 
   auditLog({ eventType: 'source_created', req, details: { id, name } });
 
@@ -184,9 +196,9 @@ router.post('/', requireAuth, requireAdmin, validate(createSourceSchema), async 
 });
 
 /** PATCH /api/sources/:id */
-router.patch('/:id', requireAuth, requireAdmin, validate(updateSourceSchema), (req, res) => {
-  const db  = getDb();
-  const id  = parseInt(req.params.id as string, 10);
+router.patch('/:id', requireAuth, requireAdmin, validate(updateSourceSchema), (req, res): void => {
+  const db: Database  = getDb();
+  const id: number  = parseInt(req.params.id as string, 10);
   const src = db.prepare('SELECT * FROM backup_sources WHERE id = ?').get(id) as BackupSource | undefined;
   if (!src) { res.status(404).json({ error: 'Not found' }); return; }
 
@@ -216,8 +228,8 @@ router.patch('/:id', requireAuth, requireAdmin, validate(updateSourceSchema), (r
 });
 
 /** DELETE /api/sources/:id */
-router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
-  const id = parseInt(req.params.id as string, 10);
+router.delete('/:id', requireAuth, requireAdmin, (req, res): void => {
+  const id: number = parseInt(req.params.id as string, 10);
   evictSourceFromCache(id);
   getDb().prepare('DELETE FROM backup_sources WHERE id = ?').run(id);
   auditLog({ eventType: 'source_deleted', req, details: { id } });
@@ -225,9 +237,9 @@ router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
 });
 
 /** POST /api/sources/:id/rotate-token  — generate new token, invalidate old */
-router.post('/:id/rotate-token', requireAuth, requireAdmin, async (req, res) => {
-  const id  = parseInt(req.params.id as string, 10);
-  const db  = getDb();
+router.post('/:id/rotate-token', requireAuth, requireAdmin, async (req, res): Promise<void> => {
+  const id: number  = parseInt(req.params.id as string, 10);
+  const db: Database  = getDb();
   const src = db.prepare('SELECT id FROM backup_sources WHERE id = ?').get(id) as BackupSource | undefined;
   if (!src) { res.status(404).json({ error: 'Not found' }); return; }
 
@@ -242,7 +254,7 @@ router.post('/:id/rotate-token', requireAuth, requireAdmin, async (req, res) => 
 // ── Exclusion rules ───────────────────────────────────────────────────────────
 
 /** GET /api/sources/:id/exclusion-rule */
-router.get('/:id/exclusion-rule', requireAuth, requireAdmin, (req, res) => {
+router.get('/:id/exclusion-rule', requireAuth, requireAdmin, (req, res): void => {
   const row = getDb().prepare(
     'SELECT * FROM source_exclusion_rules WHERE source_id = ?'
   ).get(parseInt(req.params.id as string, 10)) as SourceExclusionRule | undefined;
@@ -250,9 +262,9 @@ router.get('/:id/exclusion-rule', requireAuth, requireAdmin, (req, res) => {
 });
 
 /** PUT /api/sources/:id/exclusion-rule */
-router.put('/:id/exclusion-rule', requireAuth, requireAdmin, validate(exclusionRuleSchema), (req, res) => {
-  const db  = getDb();
-  const id  = parseInt(req.params.id as string, 10);
+router.put('/:id/exclusion-rule', requireAuth, requireAdmin, validate(exclusionRuleSchema), (req, res): void => {
+  const db: Database  = getDb();
+  const id: number  = parseInt(req.params.id as string, 10);
   if (!db.prepare('SELECT 1 FROM backup_sources WHERE id = ?').get(id)) {
     res.status(404).json({ error: 'Not found' }); return;
   }
@@ -288,12 +300,12 @@ router.put('/:id/exclusion-rule', requireAuth, requireAdmin, validate(exclusionR
 // ── Logs ─────────────────────────────────────────────────────────────────────
 
 /** GET /api/sources/:id/logs */
-router.get('/:id/logs', requireAuth, (req, res) => {
+router.get('/:id/logs', requireAuth, (req, res): void => {
   const user = (req as Request & { user: { userId: number; role: string } }).user;
-  const id = parseInt(req.params.id as string, 10);
+  const id: number = parseInt(req.params.id as string, 10);
   if (!canAccessSource(user.userId, user.role, id)) { res.status(403).json({ error: 'Forbidden' }); return; }
-  const limit  = Math.min(parseInt(String(req.query.limit  ?? '100'), 10), 500);
-  const offset = parseInt(String(req.query.offset ?? '0'), 10);
+  const limit: number  = Math.min(parseInt(String(req.query.limit  ?? '100'), 10), 500);
+  const offset: number = parseInt(String(req.query.offset ?? '0'), 10);
   const rows   = getDb().prepare(
     'SELECT * FROM backup_source_logs WHERE source_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
   ).all(id, limit, offset);
@@ -303,7 +315,7 @@ router.get('/:id/logs', requireAuth, (req, res) => {
 // ── Agent commands ─────────────────────────────────────────────────────────────
 
 /** POST /api/sources/:id/commands  — enqueue a command for the agent */
-router.post('/:id/commands', requireAuth, requireAdmin, (req, res) => {
+router.post('/:id/commands', requireAuth, requireAdmin, (req, res): void => {
   const schema = z.object({
     command: z.enum(['backup', 'uninstall', 'rotate_token', 'discover', 'update']),
     params:  z.record(z.string(), z.unknown()).optional(),
@@ -311,8 +323,8 @@ router.post('/:id/commands', requireAuth, requireAdmin, (req, res) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message }); return; }
 
-  const id  = parseInt(req.params.id as string, 10);
-  const db  = getDb();
+  const id: number  = parseInt(req.params.id as string, 10);
+  const db: Database  = getDb();
   if (!db.prepare('SELECT 1 FROM backup_sources WHERE id = ?').get(id)) {
     res.status(404).json({ error: 'Not found' }); return;
   }
@@ -326,9 +338,9 @@ router.post('/:id/commands', requireAuth, requireAdmin, (req, res) => {
 });
 
 /** GET /api/sources/:id/commands  — list commands */
-router.get('/:id/commands', requireAuth, (req, res) => {
+router.get('/:id/commands', requireAuth, (req, res): void => {
   const user = (req as Request & { user: { userId: number; role: string } }).user;
-  const id = parseInt(req.params.id as string, 10);
+  const id: number = parseInt(req.params.id as string, 10);
   if (!canAccessSource(user.userId, user.role, id)) { res.status(403).json({ error: 'Forbidden' }); return; }
   const rows = getDb().prepare(
     `SELECT * FROM agent_commands WHERE source_id = ? ORDER BY created_at DESC LIMIT 50`
@@ -339,20 +351,20 @@ router.get('/:id/commands', requireAuth, (req, res) => {
 // ── Discovered paths ──────────────────────────────────────────────────────────
 
 /** GET /api/sources/:id/paths */
-router.get('/:id/paths', requireAuth, (req, res) => {
+router.get('/:id/paths', requireAuth, (req, res): void => {
   const user = (req as Request & { user: { userId: number; role: string } }).user;
-  const id = parseInt(req.params.id as string, 10);
+  const id: number = parseInt(req.params.id as string, 10);
   if (!canAccessSource(user.userId, user.role, id)) { res.status(403).json({ error: 'Forbidden' }); return; }
   const rows = getDb().prepare(
-    `SELECT * FROM agent_discovered_paths WHERE source_id = ? ORDER BY path ASC`
+    `SELECT * FROM agent_discovered_paths WHERE source_id = ? ORDER BY path`
   ).all(id);
   res.json(rows);
 });
 
 /** GET /api/sources/:id/progress — poll backup progress for this source */
-router.get('/:id/progress', requireAuth, (req, res) => {
+router.get('/:id/progress', requireAuth, (req, res): void => {
   const user = (req as Request & { user: { userId: number; role: string } }).user;
-  const id = parseInt(req.params.id as string, 10);
+  const id: number = parseInt(req.params.id as string, 10);
   if (!canAccessSource(user.userId, user.role, id)) { res.status(403).json({ error: 'Forbidden' }); return; }
   const progress = progressStore.get(id);
 
@@ -382,7 +394,7 @@ async function agentAuth(req: Request, res: Response, next: () => void): Promise
     res.status(401).json({ error: 'Missing Bearer token' });
     return;
   }
-  const raw = authHeader.slice(7);
+  const raw: string = authHeader.slice(7);
   if (!raw.startsWith('rvs1_')) {
     console.warn(`[agent-auth] Invalid token format on ${req.method} ${req.path}: prefix=${raw.slice(0, 8)}...`);
     res.status(401).json({ error: 'Invalid token format' });
@@ -403,13 +415,13 @@ async function agentAuth(req: Request, res: Response, next: () => void): Promise
 
   // Cache miss — do full bcrypt lookup (constant-time: always iterate all sources)
   console.log(`[agent-auth] Cache miss, performing bcrypt lookup for ${req.method} ${req.path}`);
-  const db      = getDb();
+  const db: Database      = getDb();
   const sources = db.prepare('SELECT id, token_hash, disabled FROM backup_sources').all() as Pick<BackupSource, 'id' | 'token_hash' | 'disabled'>[];
   console.log(`[agent-auth] Checking ${sources.length} sources`);
 
   let matched: Pick<BackupSource, 'id' | 'token_hash' | 'disabled'> | null = null;
   for (const src of sources) {
-    const isMatch = await verifyToken(raw, src.token_hash);
+    const isMatch: boolean = await verifyToken(raw, src.token_hash);
     if (isMatch && !matched) matched = src;
   }
 
@@ -429,9 +441,9 @@ async function agentAuth(req: Request, res: Response, next: () => void): Promise
 type AgentReq = Request & { sourceId: number };
 
 /** POST /api/sources/agent/heartbeat — agent pings in, updates last_seen_at */
-router.post('/agent/heartbeat', (req, res, next) => {
-  agentAuth(req, res, () => next());
-}, (req, res) => {
+router.post('/agent/heartbeat', (req, res, next: NextFunction): void => {
+  agentAuth(req, res, (): void => next()).catch(next);
+}, (req, res): void => {
   const aReq = req as AgentReq;
   const schema = z.object({ agentVersion: z.string().max(64).optional() });
   const parsed = schema.safeParse(req.body);
@@ -447,13 +459,13 @@ router.post('/agent/heartbeat', (req, res, next) => {
 });
 
 /** GET /api/sources/agent/poll — long-poll for pending commands (30s timeout) */
-router.get('/agent/poll', (req, res, next) => {
-  agentAuth(req, res, () => next());
-}, (req, res) => {
+router.get('/agent/poll', (req, res, next: NextFunction): void => {
+  agentAuth(req, res, (): void => next()).catch(next);
+}, (req, res): void => {
   const aReq    = req as AgentReq;
-  const db      = getDb();
+  const db: Database      = getDb();
   const timeout = 30_000;
-  const start   = Date.now();
+  const start: number   = Date.now();
 
   // Update last_seen_at
   db.prepare('UPDATE backup_sources SET last_seen_at = unixepoch() WHERE id = ?').run(aReq.sourceId);
@@ -462,7 +474,7 @@ router.get('/agent/poll', (req, res, next) => {
     const cmd = db.prepare(`
       SELECT * FROM agent_commands
       WHERE source_id = ? AND status = 'pending'
-      ORDER BY created_at ASC LIMIT 1
+      ORDER BY created_at LIMIT 1
     `).get(aReq.sourceId) as AgentCommand | undefined;
 
     if (cmd) {
@@ -479,19 +491,19 @@ router.get('/agent/poll', (req, res, next) => {
   }
 
   check();
-  req.on('close', () => { /* client disconnected — check loop will end on next iteration */ });
+  req.on('close', (): void => { /* client disconnected — check loop will end on next iteration */ });
 });
 
 /** POST /api/sources/agent/ack — acknowledge a command */
-router.post('/agent/ack', (req, res, next) => {
-  agentAuth(req, res, () => next());
-}, (req, res) => {
+router.post('/agent/ack', (req, res, next: NextFunction): void => {
+  agentAuth(req, res, (): void => next()).catch(next);
+}, (req, res): void => {
   const aReq = req as AgentReq;
   const schema = z.object({ commandId: z.number().int().positive() });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: 'commandId required' }); return; }
 
-  const db = getDb();
+  const db: Database = getDb();
   db.prepare(`
     UPDATE agent_commands SET status = 'acked', acked_at = unixepoch()
     WHERE id = ? AND source_id = ? AND status = 'pending'
@@ -501,9 +513,9 @@ router.post('/agent/ack', (req, res, next) => {
 });
 
 /** POST /api/sources/agent/backup-progress — agent reports mid-backup progress */
-router.post('/agent/backup-progress', (req, res, next) => {
-  agentAuth(req, res, () => next());
-}, (req, res) => {
+router.post('/agent/backup-progress', (req, res, next: NextFunction): void => {
+  agentAuth(req, res, (): void => next()).catch(next);
+}, (req, res): void => {
   const aReq = req as AgentReq;
   const parsed = backupProgressSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -531,9 +543,9 @@ router.post('/agent/backup-progress', (req, res, next) => {
 });
 
 /** POST /api/sources/agent/backup-result — agent reports backup outcome */
-router.post('/agent/backup-result', (req, res, next) => {
-  agentAuth(req, res, () => next());
-}, (req, res) => {
+router.post('/agent/backup-result', (req, res, next: NextFunction): void => {
+  agentAuth(req, res, (): void => next()).catch(next);
+}, (req, res): void => {
   const aReq   = req as AgentReq;
   progressStore.delete(aReq.sourceId);
   const parsed = backupResultSchema.safeParse(req.body);
@@ -545,15 +557,15 @@ router.post('/agent/backup-result', (req, res, next) => {
 
   const { commandId, status, errorMessage, snapshotId } = parsed.data;
   console.log(`[agent-result] source=${aReq.sourceId} status=${status} snapshot=${snapshotId?.slice(0, 8) ?? 'none'} error=${errorMessage ?? 'none'}`);
-  const db = getDb();
+  const db: Database = getDb();
 
   // Update last_backup_at and log the result
   db.prepare(`
     UPDATE backup_sources SET last_backup_at = unixepoch() WHERE id = ?
   `).run(aReq.sourceId);
 
-  const level   = status === 'success' ? 'info' : 'error';
-  const message = status === 'success'
+  const level = status === 'success' ? 'info' : 'error';
+  const message: string = status === 'success'
     ? `Backup succeeded${snapshotId ? ` (snapshot ${snapshotId.slice(0, 8)})` : ''}`
     : `Backup failed: ${errorMessage ?? 'unknown error'}`;
 
@@ -576,7 +588,7 @@ router.post('/agent/backup-result', (req, res, next) => {
       .get(aReq.sourceId) as { id: number; name: string; repo_id: number | null } | undefined;
     if (src) {
       let repoId = src.repo_id;
-      const repoPath = path.join(getSourcesDir(), src.name);
+      const repoPath: string = path.join(getSourcesDir(), src.name);
 
       if (!repoId) {
         // Check if a repo with this path already exists (UNIQUE constraint on path)
@@ -597,7 +609,7 @@ router.post('/agent/backup-result', (req, res, next) => {
       // Trigger indexing in background (non-blocking)
       const repo = db.prepare('SELECT * FROM repositories WHERE id = ?').get(repoId) as Repository | undefined;
       if (repo) {
-        indexRepo(repo).catch((err) =>
+        indexRepo(repo).catch((err): void =>
           console.error(`[sources] indexRepo ${repoId} failed:`, err instanceof Error ? err.message : err)
         );
       }
@@ -620,14 +632,14 @@ router.post('/agent/backup-result', (req, res, next) => {
 });
 
 /** POST /api/sources/agent/discover — agent reports discovered filesystem paths */
-router.post('/agent/discover', (req, res, next) => {
-  agentAuth(req, res, () => next());
-}, (req, res) => {
+router.post('/agent/discover', (req, res, next: NextFunction): void => {
+  agentAuth(req, res, (): void => next()).catch(next);
+}, (req, res): void => {
   const aReq   = req as AgentReq;
   const parsed = discoverSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message }); return; }
 
-  const db = getDb();
+  const db: Database = getDb();
   const insert = db.prepare(`
     INSERT INTO agent_discovered_paths (source_id, path, size_bytes, file_count, last_seen_at)
     VALUES (?, ?, ?, ?, unixepoch())
@@ -637,7 +649,7 @@ router.post('/agent/discover', (req, res, next) => {
       last_seen_at = excluded.last_seen_at
   `);
 
-  const upsertMany = db.transaction((paths: typeof parsed.data.paths) => {
+  const upsertMany = db.transaction((paths: typeof parsed.data.paths): void => {
     for (const p of paths) {
       insert.run(aReq.sourceId, p.path, p.size_bytes ?? null, p.file_count ?? null);
     }
@@ -648,11 +660,11 @@ router.post('/agent/discover', (req, res, next) => {
 });
 
 /** GET /api/sources/agent/config — return backup config for agent (paths + exclusions) */
-router.get('/agent/config', (req, res, next) => {
-  agentAuth(req, res, () => next());
-}, (req, res) => {
+router.get('/agent/config', (req, res, next: NextFunction): void => {
+  agentAuth(req, res, (): void => next()).catch(next);
+}, (req, res): void => {
   const aReq = req as AgentReq;
-  const db   = getDb();
+  const db: Database   = getDb();
 
   const src = db.prepare('SELECT name, schedule, keep_last, keep_daily, keep_weekly, keep_monthly, keep_yearly FROM backup_sources WHERE id = ?').get(aReq.sourceId) as {
     name: string; schedule: string;

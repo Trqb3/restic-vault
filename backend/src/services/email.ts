@@ -1,7 +1,8 @@
 import nodemailer from 'nodemailer';
-import { getDb } from '../db/index.js';
+import { getDb } from '../db';
 import { decrypt } from './crypto.js';
 import type { EmailProviderRow } from '../types/db.js';
+import type { Database } from 'better-sqlite3';
 
 export type EmailProvider = 'smtp' | 'sendgrid' | 'mailgun' | 'resend' | 'ses';
 
@@ -54,7 +55,7 @@ export async function sendEmail(
   providerId: number,
   options: SendEmailOptions
 ): Promise<void> {
-  const db = getDb();
+  const db: Database = getDb();
   const row = db.prepare('SELECT * FROM email_providers WHERE id = ? AND enabled = 1')
     .get(providerId) as EmailProviderRow | undefined;
   if (!row) throw new Error('Email provider not found or disabled');
@@ -100,14 +101,14 @@ async function sendViaSMTP(config: SmtpConfig, options: SendEmailOptions): Promi
 }
 
 async function sendViaSendgrid(config: SendgridConfig, options: SendEmailOptions): Promise<void> {
-  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+  const res: Response = await fetch('https://api.sendgrid.com/v3/mail/send', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${config.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      personalizations: [{ to: options.to.map(email => ({ email })) }],
+      personalizations: [{ to: options.to.map((email: string) => ({ email })) }],
       from: { email: config.fromAddress, name: config.fromName },
       subject: options.subject,
       content: [
@@ -130,7 +131,7 @@ async function sendViaMailgun(config: MailgunConfig, options: SendEmailOptions):
     html: options.html,
     text: options.text ?? '',
   });
-  const res = await fetch(`${baseUrl}/v3/${config.domain}/messages`, {
+  const res: Response = await fetch(`${baseUrl}/v3/${config.domain}/messages`, {
     method: 'POST',
     headers: {
       'Authorization': `Basic ${Buffer.from(`api:${config.apiKey}`).toString('base64')}`,
@@ -142,7 +143,7 @@ async function sendViaMailgun(config: MailgunConfig, options: SendEmailOptions):
 }
 
 async function sendViaResend(config: ResendConfig, options: SendEmailOptions): Promise<void> {
-  const res = await fetch('https://api.resend.com/emails', {
+  const res: Response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${config.apiKey}`,
@@ -182,7 +183,7 @@ async function sendViaSES(config: SesConfig, options: SendEmailOptions): Promise
 }
 
 export function getDefaultProviderId(): number | null {
-  const db = getDb();
+  const db: Database = getDb();
   const row = db.prepare('SELECT id FROM email_providers WHERE is_default = 1 AND enabled = 1')
     .get() as { id: number } | undefined;
   return row?.id ?? null;
@@ -193,7 +194,7 @@ export async function sendAndLog(
   providerId: number,
   options: SendEmailOptions
 ): Promise<void> {
-  const db = getDb();
+  const db: Database = getDb();
   try {
     await sendEmail(providerId, options);
     db.prepare(`
@@ -201,7 +202,7 @@ export async function sendAndLog(
       VALUES (?, ?, ?, ?, 'sent')
     `).run(ruleId, providerId, JSON.stringify(options.to), options.subject);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg: string = err instanceof Error ? err.message : String(err);
     db.prepare(`
       INSERT INTO notification_log (rule_id, provider_id, recipients, subject, status, error_message)
       VALUES (?, ?, ?, ?, 'failed', ?)

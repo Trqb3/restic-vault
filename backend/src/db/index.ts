@@ -240,7 +240,7 @@ function migrate(db: Database.Database): void {
   `);
 
   // Additive migrations — idempotent
-  const alterations = [
+  const alterations: string[] = [
     `ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`,
     `ALTER TABLE users ADD COLUMN totp_secret TEXT`,
     `ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0`,
@@ -261,7 +261,7 @@ function migrate(db: Database.Database): void {
     try {
       db.exec(sql);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg: string = err instanceof Error ? err.message : String(err);
       if (!msg.includes('duplicate column name')) throw err;
     }
   }
@@ -315,7 +315,7 @@ function migrate(db: Database.Database): void {
     },
     {
       // Clear again: restic diff summary used 'bytes' not 'size' for the size field in older
-      // versions, causing added_size=null. Also now computes files_unmodified from file_count
+      // versions, causing added_size=null. Also, now computes files_unmodified from file_count
       // when diff format doesn't provide it. Re-compute all rows.
       key: 'migration_clear_snapshot_stats_v8',
       run: () => db.exec('DELETE FROM snapshot_stats'),
@@ -416,27 +416,6 @@ export interface Repository {
   last_backup: number | null;
   created_at: number;
 }
-
-export interface SizeHistoryRow {
-  id: number;
-  repo_id: number;
-  deduplicated_size: number;
-  total_restore_size: number | null;
-  snapshot_count: number | null;
-  recorded_at: number;
-}
-
-export interface AuditLog {
-  id: number;
-  event_type: string;
-  username: string | null;
-  ip_address: string | null;
-  user_agent: string | null;
-  details: string | null;
-  success: number;  // 0 | 1
-  created_at: number;
-}
-
 export interface Snapshot {
   id: number;
   repo_id: number;
@@ -471,15 +450,6 @@ export interface BackupSource {
   keep_yearly: number | null;
   created_at: number;
 }
-
-export interface BackupSourceLog {
-  id: number;
-  source_id: number;
-  level: string;
-  message: string;
-  created_at: number;
-}
-
 export interface AgentCommand {
   id: number;
   source_id: number;
@@ -490,15 +460,6 @@ export interface AgentCommand {
   acked_at: number | null;
   done_at: number | null;
 }
-
-export interface ExclusionProfile {
-  id: number;
-  name: string;
-  description: string | null;
-  patterns: string;  // JSON array string
-  created_at: number;
-}
-
 export interface SourceExclusionRule {
   id: number;
   source_id: number;
@@ -506,13 +467,4 @@ export interface SourceExclusionRule {
   custom_patterns: string | null;  // JSON array string
   backup_paths: string | null;      // JSON array string
   created_at: number;
-}
-
-export interface AgentDiscoveredPath {
-  id: number;
-  source_id: number;
-  path: string;
-  size_bytes: number | null;
-  file_count: number | null;
-  last_seen_at: number;
 }

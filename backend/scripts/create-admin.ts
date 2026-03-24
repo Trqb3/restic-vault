@@ -14,6 +14,7 @@
 import 'dotenv/config';
 import { getDb } from '../src/db';
 import bcrypt from 'bcrypt';
+import type { Database } from 'better-sqlite3';
 
 const username = process.argv[2] as string | undefined;
 const password = process.argv[3] as string | undefined;
@@ -37,13 +38,13 @@ if (password.length < 8) {
 async function main(): Promise<void> {
   try {
     // getDb() auto-runs migrations so the DB is always ready
-    const db = getDb();
+    const db: Database = getDb();
 
     const existing = db
       .prepare('SELECT id, role FROM users WHERE username = ?')
       .get(username) as { id: number; role: string } | undefined;
 
-    const hash = await bcrypt.hash(password!, 12);
+    const hash: string = await bcrypt.hash(password!, 12);
 
     if (existing) {
       // Update existing user to admin and reset password
