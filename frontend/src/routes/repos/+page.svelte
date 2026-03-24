@@ -34,21 +34,21 @@
   let baseDir = $state('');
   let settingsLoading = $state(false);
 
-  onMount(async () => {
-    await loadRepos();
-    try {
-      const [s, ssh] = await Promise.all([settingsApi.get(), adminApi.listSshConnections()]);
-      baseDir = s.baseDir;
-      sshConnections = ssh;
-    } catch {}
+  onMount(() => {
+    loadRepos();
+    Promise.all([settingsApi.get(), adminApi.listSshConnections()])
+      .then(([s, ssh]) => { baseDir = s.baseDir; sshConnections = ssh; })
+      .catch(() => {});
+    const timer = setInterval(() => loadRepos(true), 30_000);
+    return () => clearInterval(timer);
   });
 
-  async function loadRepos() {
-    loading = true;
+  async function loadRepos(silent = false) {
+    if (!silent) loading = true;
     try {
       repoList = await reposApi.list();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to load repositories');
+      if (!silent) toast.error(err instanceof Error ? err.message : 'Failed to load repositories');
     } finally {
       loading = false;
     }
