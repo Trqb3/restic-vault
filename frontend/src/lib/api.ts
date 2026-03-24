@@ -302,6 +302,12 @@ export interface BackupSource {
   last_seen_at: number | null;
   last_backup_at: number | null;
   agent_version: string | null;
+  schedule: string;
+  keep_last: number | null;
+  keep_daily: number | null;
+  keep_weekly: number | null;
+  keep_monthly: number | null;
+  keep_yearly: number | null;
   created_at: number;
 }
 
@@ -350,6 +356,16 @@ export interface AgentDiscoveredPath {
   last_seen_at: number;
 }
 
+export interface BackupProgress {
+  active: boolean;
+  percentDone?: number;
+  totalFiles?: number;
+  filesDone?: number;
+  totalBytes?: number;
+  bytesDone?: number;
+  currentFile?: string;
+}
+
 export const backupSources = {
   list: () =>
     request<BackupSource[]>('GET', '/api/sources'),
@@ -357,7 +373,12 @@ export const backupSources = {
     request<BackupSource>('GET', `/api/sources/${id}`),
   create: (data: { name: string; description?: string }) =>
     request<{ id: number; token: string }>('POST', '/api/sources', data),
-  update: (id: number, data: { description?: string; disabled?: boolean }) =>
+  update: (id: number, data: {
+    description?: string; disabled?: boolean;
+    schedule?: string;
+    keepLast?: number | null; keepDaily?: number | null; keepWeekly?: number | null;
+    keepMonthly?: number | null; keepYearly?: number | null;
+  }) =>
     request<{ ok: boolean }>('PATCH', `/api/sources/${id}`, data),
   delete: (id: number) =>
     request<{ ok: boolean }>('DELETE', `/api/sources/${id}`),
@@ -380,6 +401,8 @@ export const backupSources = {
     request<{ ok: boolean }>('PUT', `/api/sources/${id}/exclusion-rule`, data),
   getPaths: (id: number) =>
     request<AgentDiscoveredPath[]>('GET', `/api/sources/${id}/paths`),
+  getProgress: (id: number) =>
+    request<BackupProgress>('GET', `/api/sources/${id}/progress`),
 };
 
 export const exclusionProfiles = {
