@@ -8,7 +8,7 @@ ResticVault lets you browse snapshots, monitor backup health, deploy agents to r
 ![SvelteKit](https://img.shields.io/badge/SvelteKit-5-FF3E00?logo=svelte&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-blue)
+![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-blue)
 
 ---
 
@@ -366,4 +366,6 @@ All endpoints are under `/api`. Authentication is via JWT in HttpOnly cookies.
 
 ## License
 
-MIT
+This project is licensed under the [Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0)](LICENSE).
+
+You are free to use, modify, and share this software for **non-commercial purposes** with appropriate attribution. Commercial use requires separate permission.
