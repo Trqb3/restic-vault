@@ -19,7 +19,7 @@ const router: Router = Router();
 // The script has AGENT_VERSION="x.y.z" near the top.
 function readAgentVersion(): string {
   try {
-    const scriptPath: string = path.join(__dirname, '..', '..', 'public', 'agent-install.sh');
+    const scriptPath: string = path.join(process.cwd(), 'public', 'agent-install.sh');
     const head: string = fs.readFileSync(scriptPath, 'utf8').slice(0, 500);
     const match = head.match(/^AGENT_VERSION="([^"]+)"/m);
     if (match?.[1]) return match[1];
