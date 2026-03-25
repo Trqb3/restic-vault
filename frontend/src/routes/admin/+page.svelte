@@ -894,7 +894,7 @@
 
     <!-- Settings Tab -->
     {#if activeTab === 'settings'}
-      <div class="space-y-4 max-w-lg">
+      <div class="space-y-4">
         <!-- Indexing interval -->
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
           <p class="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-4">Indexierung</p>
