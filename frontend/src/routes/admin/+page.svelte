@@ -1001,7 +1001,14 @@
               class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600
                      hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors"
             >
-              {savingBaseDir ? 'Speichern…' : 'Speichern'}
+              {#if savingInterval}
+                Speichern…
+              {:else}
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                Speichern
+              {/if}
             </button>
           </div>
         </div>
