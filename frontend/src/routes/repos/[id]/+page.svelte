@@ -696,8 +696,8 @@
                 label: 'Dedupliziert',
                 value: formatBytes(repoStats.deduplicated_size),
                 sub: repoStats.total_restore_size > 0
-                        ? `${Math.round((1 - repoStats.deduplicated_size / repoStats.total_restore_size) * 100)}% Ersparnis`
-                        : 'Tatsächlicher Speicher',
+                  ? `${formatBytes(repoStats.total_restore_size - repoStats.deduplicated_size)} Ersparnis (${Math.round((1 - repoStats.deduplicated_size / repoStats.total_restore_size) * 100)}%)`
+                  : 'Tatsächlicher Speicher',
                 icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
                 accent: 'text-emerald-400', bg: 'bg-emerald-500/8',
               },
